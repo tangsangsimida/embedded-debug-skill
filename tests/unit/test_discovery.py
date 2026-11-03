@@ -94,3 +94,29 @@ def test_discovers_openocd_command_arguments_and_gdb_path(tmp_path: Path, monkey
     assert options["gdb_port"] == 4555
     assert options["gdb_executable"] == "/custom/gdb"
     assert options["server_path"] == "/custom/openocd"
+
+
+def test_discovers_literal_openocd_command_from_makefile(tmp_path: Path, monkeypatch) -> None:
+    (tmp_path / "Makefile").write_text(
+        'debug-server:\n\t@openocd -f interface/cmsis-dap.cfg '
+        '-f board/custom.cfg -c "gdb_port 4555"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("embedded_debug.discovery.OpenOCDManager.port_open", lambda *a: False)
+    result = discover_project(tmp_path)
+    options = openocd_launch_options(result)
+    assert options["config_files"] == ["interface/cmsis-dap.cfg", "board/custom.cfg"]
+    assert options["gdb_port"] == 4555
+    assert result["openocd_candidates"][0]["source"].endswith("Makefile:2")
+
+
+def test_does_not_guess_interpolated_openocd_script_arguments(tmp_path: Path, monkeypatch) -> None:
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    (scripts / "debug.sh").write_text(
+        "openocd -f \"$OPENOCD_CONFIG\" -c 'gdb_port 4444'\n", encoding="utf-8"
+    )
+    monkeypatch.setattr("embedded_debug.discovery.OpenOCDManager.port_open", lambda *a: False)
+    result = discover_project(tmp_path)
+    assert result["openocd_candidates"][0]["requires_review"] is True
+    assert openocd_launch_options(result) == {}

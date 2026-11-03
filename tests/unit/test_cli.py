@@ -24,11 +24,12 @@ def test_nested_command_syntax(capsys) -> None:
     assert data["command"] == "config-validate"
 
 
-def test_connect_reuses_existing_server_with_mock_gdb(tmp_path, capsys) -> None:
+def test_connect_reuses_existing_server_with_mock_gdb(tmp_path, monkeypatch, capsys) -> None:
     import socket
     from pathlib import Path
 
     fake_gdb = Path(__file__).parents[1] / "mocks" / "fake_gdb.py"
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     with socket.socket() as server:
         server.bind(("127.0.0.1", 0))
         server.listen()
@@ -52,6 +53,8 @@ def test_connect_reuses_existing_server_with_mock_gdb(tmp_path, capsys) -> None:
     data = json.loads(capsys.readouterr().out)
     assert data["target"]["connection"] == "connected"
     assert data["target"]["architecture"] == "arm"
+    assert run(["session", "stop", "--json"]) == 0
+    capsys.readouterr()
 
 
 def test_nested_session_start_status_stop_reuses_external_server(
@@ -90,7 +93,7 @@ def test_nested_session_start_status_stop_reuses_external_server(
         assert status["data"]["active"] is True
         assert run(["session", "stop", "--json"]) == 0
         stopped = json.loads(capsys.readouterr().out)
-        assert stopped["data"]["stopped"] is False
+        assert stopped["data"]["stopped"] is True
         assert server.fileno() >= 0
 
 
@@ -136,6 +139,8 @@ def test_connect_uses_swappable_openocd_configs_without_source_edits(
         assert interface in captured
         assert target in captured
         assert f"gdb_port {port}" in captured
+        assert run(["session", "stop", "--json"]) == 0
+        capsys.readouterr()
 
 
 def test_skill_launcher_never_installs_without_authorization(monkeypatch, capsys) -> None:
@@ -160,7 +165,7 @@ def test_json_build_keeps_json_clean_and_logs_on_stderr(tmp_path, capsys) -> Non
     config.write_text(
         '[build]\ncommand=["python3", "-c", "print(\\"BUILD-LOG\\")"]\ndirectory="."\n'
     )
-    assert run(["--json", "--config", str(config), "build"]) == 0
+    assert run(["--json", "--config", str(config), "build", "--authorize-command"]) == 0
     captured = capsys.readouterr()
     payload = json.loads(captured.out)
     assert payload["success"] is True

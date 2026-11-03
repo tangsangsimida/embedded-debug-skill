@@ -49,6 +49,13 @@ class OpenOCDManager:
         extra_args: Sequence[str] = (),
     ) -> None:
         if self.port_open(self.host, self.port):
+            # A previous owned child may have exited while another GDB server
+            # took over its port. Do not retain the stale process as our child.
+            if self.process is not None and self.process.poll() is not None:
+                self.process = None
+                if self._log_handle:
+                    self._log_handle.close()
+                    self._log_handle = None
             return  # Reuse an existing service; do not spawn a competing server.
         exe = shutil.which(self.executable) or (
             self.executable if Path(self.executable).is_file() else None
@@ -66,12 +73,18 @@ class OpenOCDManager:
             if item:
                 args += ["-f", item]
         args.extend(extra_args)
-        if any(
-            command.lstrip().startswith("bindto ")
-            and command.split(maxsplit=1)[-1] not in {"127.0.0.1", "localhost", "::1"}
-            for command in commands
-        ):
-            raise OpenOCDError("OpenOCD bindto commands must remain on loopback")
+        user_commands = list(commands)
+        for index, value in enumerate(extra_args[:-1]):
+            if value == "-c":
+                user_commands.append(extra_args[index + 1])
+        for command in user_commands:
+            parts = command.strip().split()
+            if (
+                parts
+                and parts[0] == "bindto"
+                and (len(parts) != 2 or parts[1] not in {"127.0.0.1", "localhost", "::1"})
+            ):
+                raise OpenOCDError("OpenOCD bindto commands must remain on loopback")
         # Apply configured service ports after target config scripts.
         args += ["-c", f"gdb_port {self.port}"]
         # Apply after user config, before init/adapter commands, to keep listeners local.

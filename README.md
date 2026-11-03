@@ -9,20 +9,22 @@ npx skills add tangsangsimida/embedded-debug-skill --skill embedded-debug -a cod
 npx skills add tangsangsimida/embedded-debug-skill --skill embedded-debug -a claude-code -g -y
 ```
 
-Requirements: Python 3.11+ for the CLI. Hardware operations additionally require user-installed OpenOCD, a GDB matching the target architecture, and an adapter/target configuration already used by the project. Skill installation does not install or modify system toolchains. The version-checking launcher can install the matching immutable GitHub commit after user authorization; the current candidate is pinned to the published source commit and is not a stable release. `edbg doctor` works even if the embedded toolchain is missing. Linux is the validated host; other operating systems are not yet verified.
+Requirements: Python 3.11+ for the CLI. Hardware operations additionally require user-installed OpenOCD, a GDB matching the target architecture, and a working project debug setup. Skill installation does not install or modify system toolchains. The current development candidate is not a stable release. `edbg doctor` works even if the embedded toolchain is missing. Linux is the validated host; other operating systems are not yet verified.
 
 Ask your agent: “Use EmbeddedDebug Skill to inspect my OpenOCD environment and connect using the current project's configuration. Read CPU registers and the current backtrace.” The agent should check first, use your OpenOCD files and matching GDB, then report exact errors or observed output. Flashing, reset, and writes require explicit authorization.
 
-## What works in 0.1.0
+## Current implementation
 
 - System-first PATH discovery and version checks with bounded subprocess timeouts.
-- Strict project TOML configuration and loopback-only OpenOCD default.
+- Optional strict project TOML overrides and loopback-only OpenOCD default.
 - OpenOCD process management, config file composition, port reuse detection, logging, and cleanup.
+- Project discovery for existing VS Code launch/tasks, OpenOCD arguments, build commands, and ELF outputs. A standalone target file and `.edbg.toml` are not required if existing project settings define the path.
 - Persistent serialized GDB/MI2 transport with token matching, nested result parsing, async record routing, timeout handling, and disconnect errors.
-- Generic GDB controller primitives for target selection, architecture/register discovery, expression reads, stack frames, breakpoints, and run-state tracking.
+- Persistent cross-process GDB/MI session, so breakpoints and selected thread survive separate `edbg` commands. Existing local GDB Servers are reused automatically and checked through GDB.
+- Generic GDB controller primitives for target selection, architecture/register discovery, expression reads, stack frames, breakpoints, thread selection, and run-state tracking.
 - Agent Skill metadata and resource validation. Skills CLI repository-install tests are an explicit release gate.
 
-The published package CLI is an early integration layer. See [Known limitations](#known-limitations); not every listed CLI surface is wired to persistent sessions yet. No physical hardware validation is claimed.
+This is a candidate build; no stable Release or physical hardware validation is claimed. See [Validation status and roadmap](#validation-status-and-roadmap) for known limits.
 
 ## Architecture
 
@@ -46,7 +48,7 @@ The support boundary is OpenOCD plus the configured GDB architecture and observe
 
 ## Install the Python CLI
 
-After user authorization, the Skill wrapper installs the CLI from the immutable source commit pinned in the installed Skill. The current candidate is not a stable Release:
+After user authorization, the Skill wrapper installs the CLI version pinned in the installed Skill. The current development candidate is not a stable Release:
 
 ```sh
 python3 <installed-skill-directory>/scripts/run_edbg.py --install-python-cli doctor --json
@@ -64,7 +66,7 @@ edbg doctor --json
 edbg connect --elf build/firmware.elf
 ```
 
-Discovery checks existing VS Code launch/tasks, CMake/Make/PlatformIO files, ELF outputs, and local GDB Server ports. An existing server is reused. If one project setting is genuinely unclear, pass only that setting explicitly. A complete OpenOCD config or user-provided interface/target scripts remain supported:
+Discovery checks existing VS Code launch/tasks, OpenOCD command arguments, CMake/Make/PlatformIO files, ELF outputs, and common local GDB Server ports. An existing server is reused automatically and validated with GDB. If one project setting is genuinely unclear, pass only that setting explicitly. A standalone `.edbg.toml` or target.cfg is unnecessary when the existing project setup already provides the target path. A complete OpenOCD config or user-provided interface/target scripts remain supported:
 
 ```sh
 edbg --json connect \
@@ -80,7 +82,7 @@ edbg --json --gdb /path/to/gdb --openocd /path/to/openocd connect \
   --openocd-config debug/openocd.cfg --elf build/firmware.elf
 ```
 
-A complete config can also contain adapter, target, board, flash driver, and initialization commands. The CLI defaults to `127.0.0.1`, and rejects non-loopback binds. `--reuse-server` avoids starting a second local OpenOCD server.
+A complete config can also contain adapter, target, board, flash driver, and initialization commands. The CLI defaults to `127.0.0.1`, and rejects non-loopback binds. If no local GDB Server is listening, it starts OpenOCD only from the project's discovered or explicitly supplied configuration.
 
 ## Environment and configuration
 
@@ -103,9 +105,9 @@ edbg breakpoint add main --json
 edbg session stop
 ```
 
-When no existing launch configuration or server is found, pass the user's existing OpenOCD config, interface/target scripts, GDB executable, and ELF. A session starts/reuses OpenOCD and stores ownership metadata; each CLI operation reconnects GDB/MI to that server. Session status reports target state as unknown unless the active GDB operation has observed it.
+When discovery finds an existing launch configuration or server, `edbg connect` can use it without repeating its settings. A session reuses the running GDB Server, stores ownership metadata, and keeps one GDB/MI process for subsequent CLI operations. Recovery reconnects GDB without restarting OpenOCD; restarting a failed OpenOCD instance requires `--authorize-openocd-restart`.
 
-The Python GDB controller exposes register, expression, frame, and breakpoint operations. Capability values are confirmed from GDB/OpenOCD responses; where the backend cannot probe safely, it reports `unknown`. The current command-line session orchestration is incomplete and is documented under limitations.
+The Python GDB controller exposes register, expression, frame, breakpoint, thread-selection, and memory operations. Capability values are confirmed from GDB/OpenOCD responses; where the backend cannot probe safely, it reports `unknown`.
 
 ## Agent installation, update, and removal
 
@@ -141,8 +143,8 @@ Read-only inspection is the default. Explicit user authorization is required bef
 
 ## Validation status and roadmap
 
-The repository includes unit/Mock tests and CI for package build, lint, types, tests, Skill validation, and isolated Skills CLI installs for Codex and Claude Code. Stable Release is additionally blocked by `release-readiness.toml` until the remaining acceptance items are complete and has no release tag yet. Hardware tests require explicit opt-in and user-supplied config and are skipped by default. Current development host has ARM GCC and OpenOCD but lacks `arm-none-eabi-gdb`; no physical probe test has been run.
+The repository includes unit/Mock tests and CI for package build, lint, types, tests, Skill validation, and isolated Skills CLI installs for Codex and Claude Code. Stable Release is blocked by `release-readiness.toml` until all required gates pass. Hardware tests require explicit opt-in and user-supplied config and are skipped by default; no physical probe test is claimed.
 
-Next: complete persistent-session CLI orchestration; implement safe memory access, flash/verify/reset with authorization and audit; architecture plugin API and evidence-based capabilities; ELF/DWARF source mapping and HardFault decoding; safe SVD reads; ThreadX/OpenOCD compatibility matrix; serial telemetry; release artifact install smoke test.
+Next: complete end-to-end Skill installation with the exact release artifact, implement architecture plugin APIs and evidence-based HardFault decoding, safe SVD reads, ThreadX/OpenOCD compatibility testing, and serial telemetry.
 
 See [architecture](docs/architecture.md), [installation](docs/installation.md), [configuration](docs/configuration.md), [CLI reference](docs/cli-reference.md), and [troubleshooting](docs/troubleshooting.md).

@@ -1,0 +1,455 @@
+"""Cross-process tests for the Unix-socket GDB session manager."""
+
+from __future__ import annotations
+
+import json
+import os
+import signal
+import socket
+import subprocess
+import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from embedded_debug.session_store import read_session
+
+MOCKS = Path(__file__).parents[1] / "mocks"
+
+
+def _listener() -> socket.socket:
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen()
+    return server
+
+
+def _env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, str]:
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("EDBG_AUDIT_LOG", str(tmp_path / "audit.jsonl"))
+    monkeypatch.setenv("EDBG_FAKE_GDB_LOG", str(tmp_path / "gdb.log"))
+    result = os.environ.copy()
+    result["XDG_STATE_HOME"] = str(tmp_path / "state")
+    result["EDBG_AUDIT_LOG"] = str(tmp_path / "audit.jsonl")
+    result["EDBG_FAKE_GDB_LOG"] = str(tmp_path / "gdb.log")
+    return result
+
+
+def _invoke(cwd: Path, env: dict[str, str], *args: str) -> tuple[int, dict[str, Any]]:
+    result = subprocess.run(
+        [sys.executable, "-m", "embedded_debug.cli", "--json", *args],
+        cwd=cwd,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=15,
+        check=False,
+    )
+    assert result.stdout, f"CLI produced no JSON (exit {result.returncode}): {result.stderr}"
+    return result.returncode, json.loads(result.stdout)
+
+
+def _start(cwd: Path, env: dict[str, str], port: int, *options: str) -> dict[str, Any]:
+    global_options: list[str] = []
+    connect_options: list[str] = []
+    global_flags = {"--gdb", "--gdb-timeout", "--openocd"}
+    index = 0
+    while index < len(options):
+        destination = global_options if options[index] in global_flags else connect_options
+        destination.extend(options[index : index + 2])
+        index += 2
+    code, payload = _invoke(
+        cwd,
+        env,
+        *global_options,
+        "connect",
+        "--host",
+        "127.0.0.1",
+        "--gdb-port",
+        str(port),
+        *connect_options,
+    )
+    assert code == 0, payload
+    assert payload["target"]["connection"] == "connected"
+    return payload
+
+
+def _stop(cwd: Path, env: dict[str, str]) -> None:
+    _invoke(cwd, env, "session", "stop")
+
+
+def _wait_for(
+    cwd: Path, env: dict[str, str], predicate: Any, timeout: float = 4.0
+) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        code, payload = _invoke(cwd, env, "session", "status")
+        if code == 0 and predicate(payload["data"]):
+            return payload["data"]
+        time.sleep(0.03)
+    raise AssertionError("debug session did not reach its expected state")
+
+
+def test_connect_reuses_vscode_configuration_without_edbg_file_or_target_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = _env(monkeypatch, tmp_path)
+    vscode = tmp_path / ".vscode"
+    vscode.mkdir()
+    build = tmp_path / "build"
+    build.mkdir()
+    (build / "firmware.elf").write_bytes(b"mock ELF")
+    (vscode / "launch.json").write_text(
+        json.dumps(
+            {
+                "configurations": [
+                    {
+                        "name": "existing OpenOCD debug",
+                        "servertype": "openocd",
+                        "gdbTarget": "127.0.0.1:3333",
+                        "configFiles": ["interface/cmsis-dap.cfg", "board/user-board.cfg"],
+                        "gdbExecutable": str(MOCKS / "fake_gdb.py"),
+                        "executable": "${workspaceFolder}/build/firmware.elf",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    server = _listener()
+    port = server.getsockname()[1]
+    launch = json.loads((vscode / "launch.json").read_text())
+    launch["configurations"][0]["gdbTarget"] = f"127.0.0.1:{port}"
+    (vscode / "launch.json").write_text(json.dumps(launch), encoding="utf-8")
+    try:
+        code, connected = _invoke(tmp_path, env, "connect")
+        assert code == 0, connected
+        assert connected["target"]["connection"] == "connected"
+        assert connected["data"]["elf"].endswith("build/firmware.elf")
+        assert not (tmp_path / ".edbg.toml").exists()
+        assert not (tmp_path / "edbg.toml").exists()
+        starts = [
+            line
+            for line in (tmp_path / "gdb.log").read_text().splitlines()
+            if line.startswith("START ")
+        ]
+        assert len(starts) == 1
+    finally:
+        _stop(tmp_path, env)
+        server.close()
+
+
+def test_flash_reuses_project_task_only_after_explicit_command_authorization(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = _env(monkeypatch, tmp_path)
+    vscode = tmp_path / ".vscode"
+    vscode.mkdir()
+    marker = tmp_path / "flash-invoked"
+    task = {
+        "version": "2.0.0",
+        "tasks": [
+            {
+                "label": "flash firmware",
+                "type": "process",
+                "command": sys.executable,
+                "args": ["-c", f"from pathlib import Path; Path({str(marker)!r}).touch()"],
+            }
+        ],
+    }
+    (vscode / "tasks.json").write_text(json.dumps(task), encoding="utf-8")
+    try:
+        code, refused = _invoke(tmp_path, env, "flash", "--authorize")
+        assert code == 2
+        assert "authorize-command" in refused["error"]["message"]
+        assert not marker.exists()
+
+        code, flashed = _invoke(tmp_path, env, "flash", "--authorize", "--authorize-command")
+        assert code == 0, flashed
+        assert marker.exists()
+        assert flashed["data"]["source"].endswith("tasks.json")
+    finally:
+        _stop(tmp_path, env)
+
+
+def test_commands_across_independent_processes_keep_gdb_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = _env(monkeypatch, tmp_path)
+    env["EDBG_FAKE_GDB_LINK_FILE"] = str(tmp_path / "link-down")
+    monkeypatch.setenv("EDBG_FAKE_GDB_LINK_FILE", env["EDBG_FAKE_GDB_LINK_FILE"])
+    server = _listener()
+    try:
+        started = _start(
+            tmp_path,
+            env,
+            server.getsockname()[1],
+            "--gdb",
+            str(MOCKS / "fake_gdb.py"),
+        )
+        assert started["data"]["session"] == "connected"
+        record = read_session()
+        assert record is not None
+        assert record["schema"] == 2
+        assert record["socket_path"]
+
+        code, added = _invoke(tmp_path, env, "breakpoint", "add", "main")
+        assert code == 0, added
+        assert added["data"]["bkpt"]["number"] == "1"
+
+        code, listed = _invoke(tmp_path, env, "breakpoint", "list")
+        assert code == 0, listed
+        assert listed["data"]["nr_rows"] == "1"
+
+        code, selected = _invoke(tmp_path, env, "thread", "select", "2")
+        assert code == 0, selected
+        assert selected["data"]["new-thread-id"] == "2"
+        code, threads = _invoke(tmp_path, env, "threads")
+        assert code == 0, threads
+        assert threads["data"]["gdb_threads"]["current-thread-id"] == "2"
+
+        code, variable = _invoke(tmp_path, env, "variable", "read", "motor_speed")
+        assert code == 0, variable
+        assert variable["data"]["value"] == "42"
+
+        code, stack = _invoke(tmp_path, env, "backtrace")
+        assert code == 0, stack
+        assert stack["data"][0]["frame"]["func"] == "main"
+
+        code, registers = _invoke(tmp_path, env, "registers")
+        assert code == 0, registers
+        assert registers["data"][0] == {"name": "r0", "value": "0x2a"}
+
+        code, resumed = _invoke(tmp_path, env, "continue", "--authorize-run")
+        assert code == 0, resumed
+        assert resumed["target_state"] in {"running", "halted"}
+        state = _wait_for(tmp_path, env, lambda item: item["target_state"] == "halted")
+        assert any("*stopped" in event for event in state["async_events"])
+
+        log = (tmp_path / "gdb.log").read_text()
+        starts = [line for line in log.splitlines() if line.startswith("START ")]
+        assert len(starts) == 1
+        assert '-break-insert "main"' in log
+        assert "-break-list" in log
+        assert "-thread-select 2" in log
+        assert '-data-evaluate-expression "motor_speed"' in log
+        assert "-stack-list-frames" in log
+        assert "-data-list-register-values x" in log
+        assert "-exec-continue" in log
+    finally:
+        _stop(tmp_path, env)
+        server.close()
+    assert read_session() is None
+
+
+def test_parallel_cli_requests_are_serialized_and_keep_one_gdb_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = _env(monkeypatch, tmp_path)
+    server = _listener()
+    try:
+        _start(
+            tmp_path,
+            env,
+            server.getsockname()[1],
+            "--gdb",
+            str(MOCKS / "fake_gdb.py"),
+        )
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            futures = [
+                pool.submit(_invoke, tmp_path, env, "variable", "read", f"value_{index}")
+                for index in range(4)
+            ]
+        results = [future.result() for future in futures]
+        assert all(code == 0 and payload["success"] for code, payload in results)
+        starts = [
+            line
+            for line in (tmp_path / "gdb.log").read_text().splitlines()
+            if line.startswith("START ")
+        ]
+        assert len(starts) == 1
+    finally:
+        _stop(tmp_path, env)
+        server.close()
+
+
+def test_session_conflict_and_unauthorized_hardware_operations_are_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = _env(monkeypatch, tmp_path)
+    first, second = _listener(), _listener()
+    try:
+        _start(
+            tmp_path,
+            env,
+            first.getsockname()[1],
+            "--gdb",
+            str(MOCKS / "fake_gdb.py"),
+        )
+        code, conflict = _invoke(
+            tmp_path,
+            env,
+            "--gdb",
+            str(MOCKS / "fake_gdb.py"),
+            "connect",
+            "--host",
+            "127.0.0.1",
+            "--gdb-port",
+            str(second.getsockname()[1]),
+        )
+        assert code == 2
+        assert "different debug session" in conflict["error"]["message"]
+
+        dangerous = [
+            ("reset",),
+            ("flash",),
+            ("memory-write", "0x20000000", "--value", "1"),
+            ("continue",),
+            ("step",),
+        ]
+        for command in dangerous:
+            code, response = _invoke(tmp_path, env, *command)
+            assert code == 2
+            assert response["error"]["code"] == "AUTHORIZATION_REQUIRED"
+
+        log = (tmp_path / "gdb.log").read_text()
+        assert "monitor reset halt" not in log
+        assert 'console "load"' not in log
+        assert "-data-write-memory-bytes" not in log
+        assert "-exec-continue" not in log
+    finally:
+        _stop(tmp_path, env)
+        first.close()
+        second.close()
+
+
+def test_gdb_timeout_and_abnormal_exit_can_be_recovered(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = _env(monkeypatch, tmp_path)
+    crash_file = tmp_path / "crash-on"
+    env["EDBG_FAKE_GDB_CRASH_FILE"] = str(crash_file)
+    monkeypatch.setenv("EDBG_FAKE_GDB_CRASH_FILE", str(crash_file))
+    server = _listener()
+    try:
+        _start(
+            tmp_path,
+            env,
+            server.getsockname()[1],
+            "--gdb",
+            str(MOCKS / "fake_gdb.py"),
+            "--gdb-timeout",
+            "0.08",
+        )
+        code, timeout = _invoke(tmp_path, env, "variable", "read", "slow_value")
+        assert code == 2
+        assert "timed out" in timeout["error"]["message"]
+
+        code, recovered = _invoke(tmp_path, env, "session", "recover")
+        assert code == 0, recovered
+        code, fast = _invoke(tmp_path, env, "variable", "read", "fast_value")
+        assert code == 0, fast
+        assert fast["data"]["value"] == "7"
+
+        crash_file.write_text("-data-evaluate-expression", encoding="utf-8")
+        code, crashed = _invoke(tmp_path, env, "variable", "read", "crash_value")
+        assert code == 2
+        assert crashed["success"] is False
+        crash_file.unlink()
+
+        _wait_for(tmp_path, env, lambda item: item["active"] is False)
+        code, recovered = _invoke(tmp_path, env, "session", "recover")
+        assert code == 0, recovered
+        code, fast = _invoke(tmp_path, env, "variable", "read", "fast_value")
+        assert code == 0, fast
+        starts = [
+            line
+            for line in (tmp_path / "gdb.log").read_text().splitlines()
+            if line.startswith("START ")
+        ]
+        assert len(starts) == 3
+    finally:
+        _stop(tmp_path, env)
+        server.close()
+
+
+def test_external_gdb_server_disconnect_is_detected_in_band_and_recovered(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = _env(monkeypatch, tmp_path)
+    link_file = tmp_path / "link-down"
+    env["EDBG_FAKE_GDB_LINK_FILE"] = str(link_file)
+    monkeypatch.setenv("EDBG_FAKE_GDB_LINK_FILE", str(link_file))
+    server = _listener()
+    try:
+        _start(
+            tmp_path,
+            env,
+            server.getsockname()[1],
+            "--gdb",
+            str(MOCKS / "fake_gdb.py"),
+        )
+        link_file.write_text("disconnected", encoding="utf-8")
+        code, status = _invoke(tmp_path, env, "session", "status")
+        assert code == 0
+        assert status["data"]["active"] is False
+        assert status["data"]["target_link"] == "disconnected"
+        link_file.unlink()
+
+        code, recovered = _invoke(tmp_path, env, "session", "recover")
+        assert code == 0, recovered
+        code, status = _invoke(tmp_path, env, "session", "status")
+        assert code == 0 and status["data"]["target_link"] == "verified"
+    finally:
+        _stop(tmp_path, env)
+        server.close()
+
+
+def test_owned_openocd_failure_is_detected_and_restarted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = _env(monkeypatch, tmp_path)
+    env["EDBG_MOCK_OPENOCD_ARGS"] = str(tmp_path / "openocd.args")
+    monkeypatch.setenv("EDBG_MOCK_OPENOCD_ARGS", env["EDBG_MOCK_OPENOCD_ARGS"])
+    with socket.socket() as reserve:
+        reserve.bind(("127.0.0.1", 0))
+        port = reserve.getsockname()[1]
+    try:
+        _start(
+            tmp_path,
+            env,
+            port,
+            "--gdb",
+            str(MOCKS / "fake_gdb.py"),
+            "--openocd",
+            str(MOCKS / "fake_openocd.py"),
+            "--gdb-timeout",
+            "1",
+            "--interface",
+            "interface/mock.cfg",
+            "--target",
+            "target/mock.cfg",
+        )
+        record = read_session()
+        assert record and record["openocd_owned"]
+        previous_pid = record["openocd_pid"]
+        os.kill(previous_pid, signal.SIGTERM)
+        state = _wait_for(tmp_path, env, lambda item: item["target_state"] == "disconnected")
+        assert state["active"] is False
+
+        code, denied = _invoke(tmp_path, env, "session", "recover")
+        assert code != 0
+        assert "authorize-openocd-restart" in denied["error"]["message"]
+        code, recovered = _invoke(
+            tmp_path, env, "session", "recover", "--authorize-openocd-restart"
+        )
+        assert code == 0, recovered
+        updated = read_session()
+        assert updated and updated["openocd_pid"] != previous_pid
+        code, status = _invoke(tmp_path, env, "session", "status")
+        assert code == 0 and status["data"]["active"] is True
+    finally:
+        _stop(tmp_path, env)

@@ -6,8 +6,10 @@ import queue
 import shutil
 import signal
 import subprocess
+import sys
 import threading
 import time
+from collections import deque
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -30,8 +32,11 @@ class MITransport:
         self._lock = threading.Lock()
         self._token = 0
         self._reader: threading.Thread | None = None
+        self._stderr_reader: threading.Thread | None = None
+        self._state_changed = threading.Condition()
         self.state = "disconnected"
-        self.async_records: list[MIRecord] = []
+        self.async_records: deque[MIRecord] = deque(maxlen=500)
+        self.stderr_tail: deque[str] = deque(maxlen=100)
 
     def start(self, elf: str | Path | None = None, extra_args: Sequence[str] = ()) -> None:
         if self.process and self.process.poll() is None:
@@ -41,7 +46,11 @@ class MITransport:
         )
         if executable is None:
             raise GDBError(f"GDB executable not found: {self.executable}")
-        args = [executable, "--interpreter=mi2", "--quiet", *extra_args]
+        executable_path = Path(executable)
+        if executable_path.suffix == ".py" and not executable_path.stat().st_mode & 0o111:
+            args = [sys.executable, executable, "--interpreter=mi2", "--quiet", *extra_args]
+        else:
+            args = [executable, "--interpreter=mi2", "--quiet", *extra_args]
         if elf:
             args.append(str(elf))
         self.process = subprocess.Popen(
@@ -55,6 +64,8 @@ class MITransport:
         self.state = "unknown"
         self._reader = threading.Thread(target=self._read_stdout, daemon=True)
         self._reader.start()
+        self._stderr_reader = threading.Thread(target=self._read_stderr, daemon=True)
+        self._stderr_reader.start()
 
     def _read_stdout(self) -> None:
         assert self.process and self.process.stdout
@@ -65,8 +76,45 @@ class MITransport:
                 self._records.put(MIRecord(None, "parse-error", text=str(exc), raw=line))
                 continue
             if record:
+                self._observe_record(record)
                 self._records.put(record)
+        with self._state_changed:
+            self.state = "disconnected"
+            self._state_changed.notify_all()
         self._records.put(MIRecord(None, "eof", text="GDB closed stdout"))
+
+    def _read_stderr(self) -> None:
+        process = self.process
+        if process is None or process.stderr is None:
+            return
+        for line in process.stderr:
+            self.stderr_tail.append(line.rstrip("\r\n"))
+
+    def _observe_record(self, record: MIRecord) -> None:
+        """Keep run state current even when no command is waiting for MI output."""
+        with self._state_changed:
+            if record.kind in {"exec", "status", "notify"}:
+                self.async_records.append(record)
+            if record.kind == "exec" and record.cls == "running":
+                self.state = "running"
+            elif record.kind == "exec" and record.cls == "stopped":
+                self.state = "halted"
+            elif record.kind == "notify" and record.cls in {
+                "thread-group-exited",
+                "thread-group-removed",
+            }:
+                self.state = "disconnected"
+            self._state_changed.notify_all()
+
+    def wait_for_state(self, state: str, timeout: float | None = None) -> bool:
+        deadline = time.monotonic() + (self.timeout if timeout is None else timeout)
+        with self._state_changed:
+            while self.state != state:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                self._state_changed.wait(remaining)
+            return True
 
     def command(self, command: str, timeout: float | None = None) -> MIRecord:
         with self._lock:
@@ -81,13 +129,18 @@ class MITransport:
             while True:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
+                    with self._state_changed:
+                        self.state = "unknown"
+                        self._state_changed.notify_all()
                     raise GDBTimeout(f"GDB/MI command timed out: {command}")
                 try:
                     record = self._records.get(timeout=remaining)
                 except queue.Empty as exc:
+                    with self._state_changed:
+                        self.state = "unknown"
+                        self._state_changed.notify_all()
                     raise GDBTimeout(f"GDB/MI command timed out: {command}") from exc
                 if record.kind in {"exec", "status", "notify", "console", "target", "log"}:
-                    self.async_records.append(record)
                     if record.kind == "exec" and record.cls == "running":
                         self.state = "running"
                     elif record.kind == "exec" and record.cls == "stopped":
@@ -121,11 +174,14 @@ class MITransport:
         self.close()
         self._records = queue.Queue()
         self.async_records.clear()
+        self.stderr_tail.clear()
         self.start(elf, extra_args)
 
     def close(self) -> None:
         process, self.process = self.process, None
         self.state = "disconnected"
+        with self._state_changed:
+            self._state_changed.notify_all()
         if process and process.poll() is None:
             try:
                 if process.stdin:
