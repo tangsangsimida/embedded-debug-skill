@@ -14,7 +14,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 PINNED_VERSION = "0.1.0"
-SOURCE = "git+https://github.com/tangsangsimida/embedded-debug-skill.git@1d931b2199f47daef311cb4008706d4a958e7a6e"
+SOURCE = "git+https://github.com/tangsangsimida/embedded-debug-skill.git@dd31aba0c971042c39f2eedaf1522abc0ef0416b"
 PINNED_SOURCE_DIGEST = "13edf806971a3d7c1bbbdab8abcb1ee0b294a12818a4596dc501aa0d5f7caa4c"
 
 
