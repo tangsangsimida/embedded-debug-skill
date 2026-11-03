@@ -107,11 +107,12 @@ def main() -> int:
         if not (skill / relative).is_file():
             raise RuntimeError(f"Installed Skill is missing {relative}")
     for source_file in (root / "skills/embedded-debug").rglob("*"):
-        if source_file.is_file():
-            installed = skill / source_file.relative_to(root / "skills/embedded-debug")
-            if not installed.is_file() or installed.read_bytes() != source_file.read_bytes():
-                relative = source_file.relative_to(root)
-                raise RuntimeError(f"Installed Skill resource differs: {relative}")
+        if not source_file.is_file() or "__pycache__" in source_file.parts:
+            continue
+        installed = skill / source_file.relative_to(root / "skills/embedded-debug")
+        if not installed.is_file() or installed.read_bytes() != source_file.read_bytes():
+            relative = source_file.relative_to(root)
+            raise RuntimeError(f"Installed Skill resource differs: {relative}")
 
     venv = runner_temp / "cli-runtime"
     run([sys.executable, "-m", "venv", str(venv)], env=env, cwd=root)
