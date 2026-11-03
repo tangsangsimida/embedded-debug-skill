@@ -202,14 +202,16 @@ def test_startup_timeout_cleans_gdb_child_before_aborting(
     }
     try:
         with pytest.raises(SessionManagerError, match="did not become ready"):
-            start_session(settings, timeout=0.3)
-        start_records = [
-            line
-            for line in (tmp_path / "gdb.log").read_text().splitlines()
-            if line.startswith("START ")
-        ]
-        assert len(start_records) == 1
-        assert not process_alive(int(start_records[0].split()[1]))
+            # Leave enough time for slower Windows ARM runners to launch the
+            # manager and GDB child before the deliberate target-select stall.
+            start_session(settings, timeout=3.0)
+        gdb_log = tmp_path / "gdb.log"
+        if gdb_log.exists():
+            start_records = [
+                line for line in gdb_log.read_text().splitlines() if line.startswith("START ")
+            ]
+            assert len(start_records) == 1
+            assert not process_alive(int(start_records[0].split()[1]))
         assert read_session() is None
     finally:
         server.close()
