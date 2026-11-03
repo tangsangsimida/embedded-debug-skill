@@ -207,23 +207,20 @@ def _openocd_listening_ports() -> set[int]:
     """
     ports: set[int] = set()
     try:
-        connections = psutil.net_connections(kind="tcp")
+        for process in psutil.process_iter(["name"]):
+            try:
+                name = str(process.info.get("name", "")).casefold()
+                if name not in {"openocd", "openocd.exe"}:
+                    continue
+                for connection in process.net_connections(kind="tcp"):
+                    if connection.status != psutil.CONN_LISTEN or not connection.laddr:
+                        continue
+                    if connection.laddr.ip in {"127.0.0.1", "::1", "0.0.0.0", "::"}:
+                        ports.add(int(connection.laddr.port))
+            except (psutil.Error, OSError):
+                continue
     except (psutil.Error, OSError):
         return ports
-    for connection in connections:
-        if connection.status != psutil.CONN_LISTEN or not connection.laddr:
-            continue
-        address = connection.laddr.ip
-        if address not in {"127.0.0.1", "::1", "0.0.0.0", "::"}:
-            continue
-        if not connection.pid:
-            continue
-        try:
-            name = Path(psutil.Process(connection.pid).exe()).name.casefold()
-        except (psutil.Error, OSError):
-            continue
-        if name in {"openocd", "openocd.exe"}:
-            ports.add(int(connection.laddr.port))
     return ports
 
 

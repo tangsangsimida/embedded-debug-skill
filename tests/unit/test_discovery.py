@@ -125,8 +125,12 @@ def test_does_not_guess_interpolated_openocd_script_arguments(tmp_path: Path, mo
 
 def test_discovers_nonstandard_openocd_loopback_listener(tmp_path: Path, monkeypatch) -> None:
     address = SimpleNamespace(ip="127.0.0.1", port=4556)
-    listener = SimpleNamespace(status="LISTEN", laddr=address, pid=42)
-    monkeypatch.setattr("embedded_debug.discovery.psutil.net_connections", lambda **_: [listener])
+    listener = SimpleNamespace(status="LISTEN", laddr=address)
+    process = SimpleNamespace(
+        info={"name": "openocd"},
+        net_connections=lambda **_: [listener],
+    )
+    monkeypatch.setattr("embedded_debug.discovery.psutil.process_iter", lambda *_: [process])
     monkeypatch.setattr(
         "embedded_debug.discovery.psutil.Process",
         lambda pid: SimpleNamespace(exe=lambda: "/tools/openocd"),

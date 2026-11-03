@@ -135,7 +135,11 @@ def start_session(settings: dict[str, Any], timeout: float = 20.0) -> dict[str, 
             process.kill()
             process.wait()
         settings_path.unlink(missing_ok=True)
-        raise SessionManagerError(f"Debug session manager did not become ready within {timeout}s")
+        details = log_path.read_text(encoding="utf-8", errors="replace")[-4000:]
+        suffix = f" Diagnostics: {details.strip()}" if details.strip() else ""
+        raise SessionManagerError(
+            f"Debug session manager did not become ready within {timeout}s.{suffix}"
+        )
 
 
 def _ensure_compatible(settings: dict[str, Any], current: dict[str, Any]) -> None:
