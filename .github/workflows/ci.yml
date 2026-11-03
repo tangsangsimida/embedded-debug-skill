@@ -40,4 +40,4 @@ jobs:
       - run: pytest
       - run: python -m build
       - run: python -m pip check
-      - run: pip-audit
+      - run: pip-audit --skip-editable
