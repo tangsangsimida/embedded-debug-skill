@@ -25,13 +25,13 @@ jobs:
       - name: Create isolated agent home
         run: mkdir -p "$RUNNER_TEMP/agent-home"
       - name: Install Skill from public GitHub repository
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') }}
         run: npx --yes skills@1.7.6 add tangsangsimida/embedded-debug-skill --skill embedded-debug --agent "${{ matrix.agent }}" --copy -g -y
         env:
           HOME: ${{ runner.temp }}/agent-home
           DISABLE_TELEMETRY: '1'
       - name: Install pull request candidate from the checked out tree
-        if: github.event_name != 'push' || github.ref != 'refs/heads/main'
+        if: ${{ github.event_name != 'push' || (github.ref != 'refs/heads/main' && github.ref != 'refs/heads/master') }}
         run: npx --yes skills@1.7.6 add . --skill embedded-debug --agent "${{ matrix.agent }}" --copy -g -y
         env:
           HOME: ${{ runner.temp }}/agent-home
