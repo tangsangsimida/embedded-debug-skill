@@ -34,6 +34,8 @@ def inspect_tool(
             get_platform().executable_argv(path, "--version"),
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
             check=False,
         )
@@ -62,6 +64,8 @@ def inspect_gdb_mi(executable: str, timeout: float = 3.0) -> str:
             input="1-gdb-version\n2-gdb-exit\n",
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
             check=False,
         )

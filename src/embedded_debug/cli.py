@@ -270,7 +270,15 @@ def _emit(envelope: Envelope, as_json: bool) -> None:
 def _run_external(
     argv: Sequence[str], cwd: Path, as_json: bool
 ) -> subprocess.CompletedProcess[str]:
-    result = subprocess.run(argv, cwd=cwd, capture_output=True, text=True, check=False)
+    result = subprocess.run(
+        argv,
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
     if as_json:
         for stream in (result.stdout, result.stderr):
             if stream:

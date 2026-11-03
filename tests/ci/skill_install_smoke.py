@@ -14,7 +14,15 @@ from typing import Any
 def run(command: list[str], *, env: dict[str, str], cwd: Path) -> subprocess.CompletedProcess[str]:
     if os.name == "nt" and Path(command[0]).suffix.casefold() in {".cmd", ".bat"}:
         command = ["cmd.exe", "/d", "/s", "/c", subprocess.list2cmdline(command)]
-    result = subprocess.run(command, cwd=cwd, env=env, text=True, capture_output=True)
+    result = subprocess.run(
+        command,
+        cwd=cwd,
+        env=env,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+    )
     if result.returncode:
         raise RuntimeError(
             f"Command failed ({result.returncode}): {command!r}\n"
@@ -82,9 +90,7 @@ def main() -> int:
     )
 
     skill_dir = (
-        ".agents/skills/embedded-debug"
-        if agent == "codex"
-        else ".claude/skills/embedded-debug"
+        ".agents/skills/embedded-debug" if agent == "codex" else ".claude/skills/embedded-debug"
     )
     skill = home / skill_dir
     required = [
@@ -166,9 +172,7 @@ def main() -> int:
         env=env,
         cwd=root,
     )
-    run(
-        [sys.executable, "skills/embedded-debug/scripts/check_version.py"], env=env, cwd=root
-    )
+    run([sys.executable, "skills/embedded-debug/scripts/check_version.py"], env=env, cwd=root)
     return 0
 
 

@@ -24,6 +24,8 @@ def _matches_build_info(command: Sequence[str]) -> bool:
             [*command, "--json", "build-info"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=8,
             check=False,
         )
@@ -60,7 +62,8 @@ def _venv_python(cli_path: Path) -> Path:
 def _run_cached(cli: Path, args: Sequence[str]) -> int:
     try:
         result = subprocess.run(
-            [str(cli), "--version"], capture_output=True, text=True, timeout=5, check=False
+            [str(cli), "--version"], capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=5, check=False
         )
     except (OSError, subprocess.TimeoutExpired):
         return 2
@@ -82,7 +85,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if existing_cli:
         try:
             version_result = subprocess.run(
-                [existing_cli, "--version"], capture_output=True, text=True, timeout=5, check=False
+                [existing_cli, "--version"], capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=5, check=False
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             print(f"Existing edbg command could not be checked: {exc}", file=sys.stderr)
@@ -138,7 +142,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             return 2
         command.extend(remainder)
-        result = subprocess.run(command, capture_output=True, text=True, check=False)
+        result = subprocess.run(
+            command, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False
+        )
         if result.stderr:
             print(result.stderr, end="", file=sys.stderr)
         if result.stdout:
@@ -160,6 +166,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         [python, "-m", "venv", str(cached_cli.parent.parent)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     if create.returncode:
@@ -175,6 +183,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         [str(venv_python), "-m", "pip", "install", SOURCE],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     if install.stdout:

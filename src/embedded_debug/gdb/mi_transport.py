@@ -62,6 +62,8 @@ class MITransport:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             bufsize=1,
             **get_platform().creation_options(),
         )
