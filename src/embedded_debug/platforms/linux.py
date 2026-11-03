@@ -25,7 +25,8 @@ class LinuxPlatform(BasePlatform):
                 for line in Path(f"/proc/{pid}/status").read_text().splitlines()
                 if line.startswith("Uid:")
             )
-            if int(uid_line.split()[1]) != os.getuid():
+            getuid = getattr(os, "getuid", None)
+            if getuid is None or int(uid_line.split()[1]) != getuid():
                 return False
             actual = Path(f"/proc/{pid}/exe").resolve(strict=True)
             expected = Path(executable).resolve(strict=True)
