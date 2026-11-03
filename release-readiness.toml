@@ -6,5 +6,5 @@ blockers = [
   "Architecture-specific HardFault diagnostics are not implemented.",
   "RTOS awareness and ThreadX decoding are not validated.",
   "SVD peripheral access and telemetry backends are not implemented.",
-  "Multi-version GitHub Actions and release-gate runs have not yet completed.",
+  "The exact candidate has not passed a formal Release Gate; stable-release acceptance remains incomplete.",
 ]
