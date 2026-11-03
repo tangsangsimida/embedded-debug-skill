@@ -111,6 +111,25 @@ def test_discovers_literal_openocd_command_from_makefile(tmp_path: Path, monkeyp
     assert result["openocd_candidates"][0]["source"].endswith("Makefile:2")
 
 
+def test_deduplicates_case_insensitive_makefile_aliases(tmp_path: Path, monkeypatch) -> None:
+    (tmp_path / "Makefile").write_text(
+        "debug-server:\n\t@openocd -f interface/cmsis-dap.cfg\n", encoding="utf-8"
+    )
+    original_samefile = Path.samefile
+
+    def samefile(path: Path, other: Path) -> bool:
+        if path.name.casefold() == other.name.casefold() == "makefile":
+            return True
+        return original_samefile(path, other)
+
+    monkeypatch.setattr(Path, "samefile", samefile)
+    monkeypatch.setattr("embedded_debug.discovery.OpenOCDManager.port_open", lambda *a: False)
+    result = discover_project(tmp_path)
+    options = openocd_launch_options(result)
+    assert len(result["openocd_candidates"]) == 1
+    assert options["config_files"] == ["interface/cmsis-dap.cfg"]
+
+
 def test_does_not_guess_interpolated_openocd_script_arguments(tmp_path: Path, monkeypatch) -> None:
     scripts = tmp_path / "scripts"
     scripts.mkdir()

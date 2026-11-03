@@ -90,6 +90,8 @@ def start_session(settings: dict[str, Any], timeout: float = 20.0) -> dict[str, 
             os.fsync(handle.fileno())
         log_handle = log_path.open("a", encoding="utf-8")
         try:
+            log_handle.write(f"launching session daemon {session_id}\n")
+            log_handle.flush()
             process = subprocess.Popen(
                 [
                     sys.executable,
@@ -108,6 +110,8 @@ def start_session(settings: dict[str, Any], timeout: float = 20.0) -> dict[str, 
                 close_fds=True,
                 **get_platform().creation_options(),
             )
+            log_handle.write(f"session daemon process started: pid={process.pid}\n")
+            log_handle.flush()
         finally:
             log_handle.close()
         deadline = time.monotonic() + timeout

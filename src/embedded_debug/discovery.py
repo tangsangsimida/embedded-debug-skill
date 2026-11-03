@@ -138,7 +138,15 @@ def _script_openocd_commands(root: Path) -> list[dict[str, Any]]:
     paths.extend(sorted((root / "scripts").glob("*.sh")))
     paths.extend(sorted((root / "debug").glob("*.sh")))
     candidates: list[dict[str, Any]] = []
-    for path in dict.fromkeys(paths):
+    unique_paths: list[Path] = []
+    for path in paths:
+        try:
+            if any(path.samefile(previous) for previous in unique_paths):
+                continue
+        except OSError:
+            pass
+        unique_paths.append(path)
+    for path in unique_paths:
         if not path.is_file():
             continue
         try:

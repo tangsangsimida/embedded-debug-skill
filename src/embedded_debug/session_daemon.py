@@ -69,6 +69,7 @@ class DebugSessionDaemon:
         try:
             get_platform().lock_file(self.lock_handle, non_blocking=True)
             self.lock_acquired = True
+            print("session daemon lock acquired", file=sys.stderr, flush=True)
         except (BlockingIOError, OSError) as exc:
             raise SessionFailure(
                 "Another debug session manager already owns this user session"
@@ -83,14 +84,17 @@ class DebugSessionDaemon:
             config_files=self.settings.get("config_files", []),
             extra_args=self.settings.get("server_args", []),
         )
+        print("session daemon OpenOCD ready", file=sys.stderr, flush=True)
         if self.stopping.is_set():
             raise SessionFailure("Session shutdown requested during OpenOCD startup")
         self._connect_gdb()
+        print("session daemon GDB connected", file=sys.stderr, flush=True)
         if self.stopping.is_set():
             raise SessionFailure("Session shutdown requested during GDB startup")
         server, endpoint = get_platform().create_ipc_server()
         self.server = server
         self.ipc_endpoint = endpoint
+        print("session daemon IPC ready", file=sys.stderr, flush=True)
         save_session(
             {
                 "schema": 3,
@@ -534,6 +538,7 @@ def _main() -> int:
     args = parser.parse_args()
     set_session_name(args.session_name)
     settings = json.loads(args.settings.read_text(encoding="utf-8"))
+    print("session daemon settings loaded", file=sys.stderr, flush=True)
     daemon = DebugSessionDaemon(args.session_id, settings)
 
     def stop_handler(_signum: int, _frame: Any) -> None:
