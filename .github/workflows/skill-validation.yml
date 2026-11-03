@@ -1,0 +1,39 @@
+name: Skill validation
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: python skills/embedded-debug/scripts/validate_skill.py skills/embedded-debug
+      - run: python skills/embedded-debug/scripts/check_version.py
+      - run: npx --yes skills-ref@0.1.5 validate skills/embedded-debug
+      - name: Install into isolated Codex profile
+        run: npx --yes skills@1.7.6 add . --skill embedded-debug --agent codex --copy -g -y
+        env:
+          HOME: ${{ runner.temp }}/skill-validation-home
+          DISABLE_TELEMETRY: '1'
+      - name: Verify discovery metadata and resources
+        env:
+          HOME: ${{ runner.temp }}/skill-validation-home
+        run: |
+          test -f "$HOME/.agents/skills/embedded-debug/SKILL.md"
+          python - <<'PY'
+          from pathlib import Path
+          import os
+          skill = Path(os.environ['HOME']) / '.agents/skills/embedded-debug'
+          assert (skill / 'references/setup.md').is_file()
+          assert (skill / 'scripts/run_edbg.py').is_file()
+          assert '--install-python-cli' in (skill / 'scripts/run_edbg.py').read_text()
+          PY

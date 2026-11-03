@@ -1,0 +1,41 @@
+name: Reusable release gate
+on:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: python -m pip install -e '.[dev]'
+      - run: ruff check . && mypy src/embedded_debug && pytest && python -m build && pip-audit
+      - run: python skills/embedded-debug/scripts/validate_skill.py skills/embedded-debug
+      - run: python skills/embedded-debug/scripts/check_version.py
+      - run: npx --yes skills-ref@0.1.5 validate skills/embedded-debug
+      - name: Install exact wheel and smoke-test CLI
+        run: |
+          python -m pip install --force-reinstall dist/embedded_debug_skill-0.1.0-py3-none-any.whl
+          edbg --version
+          edbg --help
+          edbg doctor --json
+      - name: Install and verify Codex Skill
+        run: |
+          npx --yes skills@1.7.6 add . --skill embedded-debug --agent codex --copy -g -y
+          test -f "$HOME/.agents/skills/embedded-debug/SKILL.md"
+        env:
+          DISABLE_TELEMETRY: '1'
+      - name: Install and verify Claude Code Skill
+        run: |
+          npx --yes skills@1.7.6 add . --skill embedded-debug --agent claude-code --copy -g -y
+          test -f "$HOME/.claude/skills/embedded-debug/SKILL.md"
+        env:
+          DISABLE_TELEMETRY: '1'
+      - name: Enforce stable-release readiness
+        run: python skills/embedded-debug/scripts/check_release_readiness.py

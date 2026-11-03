@@ -1,0 +1,10 @@
+# User-supplied OpenOCD target configuration required. This template claims no GD32E5 validation.
+[tools]
+gdb = "arm-none-eabi-gdb"
+openocd = "openocd"
+[openocd]
+config = "debug/openocd.cfg"
+host = "127.0.0.1"
+gdb_port = 3333
+[project]
+elf = "build/firmware.elf"

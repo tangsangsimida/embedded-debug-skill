@@ -1,0 +1,15 @@
+# Demonstration only. Reuses the user's installed OpenOCD scripts; not a support whitelist.
+[tools]
+gdb = "arm-none-eabi-gdb"
+openocd = "openocd"
+[openocd]
+interface = "interface/cmsis-dap.cfg"
+target = "target/stm32f4x.cfg"
+host = "127.0.0.1"
+gdb_port = 3333
+adapter_khz = 1000
+[project]
+elf = "build/firmware.elf"
+[build]
+command = ["make"]
+directory = "."

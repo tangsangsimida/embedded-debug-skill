@@ -1,0 +1,68 @@
+name: Skill install test
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        agent: [codex, claude-code]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Create isolated agent home
+        run: mkdir -p "$RUNNER_TEMP/agent-home"
+      - name: Install candidate Skill with Skills CLI
+        run: npx --yes skills@1.7.6 add . --skill embedded-debug --agent "${{ matrix.agent }}" --copy -g -y
+        env:
+          HOME: ${{ runner.temp }}/agent-home
+          DISABLE_TELEMETRY: '1'
+      - name: Verify installed Skill location and resources
+        env:
+          HOME: ${{ runner.temp }}/agent-home
+          SKILL_AGENT: ${{ matrix.agent }}
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import os
+          home = Path(os.environ['HOME'])
+          root = home / ('.agents/skills/embedded-debug' if os.environ['SKILL_AGENT'] == 'codex'
+                         else '.claude/skills/embedded-debug')
+          assert (root / 'SKILL.md').is_file(), root
+          for rel in ['references/setup.md', 'references/debugging.md', 'references/hardfault.md',
+                      'references/threadx.md', 'references/safety.md', 'scripts/run_edbg.py',
+                      'scripts/check_version.py']:
+              assert (root / rel).is_file(), rel
+          text = (root / 'SKILL.md').read_text()
+          assert 'edbg doctor --json' in text
+          assert 'explicit user authorization' in text
+          assert 'scripts/run_edbg.py' in text
+          PY
+      - name: Build and install the exact package artifact
+        run: |
+          python -m pip install -e '.[dev]'
+          python -m build
+          python -m pip install --force-reinstall dist/embedded_debug_skill-0.1.0-py3-none-any.whl
+          edbg --version
+          edbg --help
+          edbg doctor --json > "$RUNNER_TEMP/doctor.json"
+          python - <<'PY'
+          import json, os
+          data = json.load(open(os.path.join(os.environ['RUNNER_TEMP'], 'doctor.json')))
+          assert data['success'] is True
+          assert 'cli_ready' in data['data']
+          assert 'debug_tools_ready' in data['data']
+          PY
+          pytest
+          python skills/embedded-debug/scripts/validate_skill.py skills/embedded-debug
+          python skills/embedded-debug/scripts/check_version.py

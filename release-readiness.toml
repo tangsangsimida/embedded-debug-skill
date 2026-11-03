@@ -1,0 +1,10 @@
+# Formal Releases are intentionally blocked until every listed acceptance item is met.
+[release]
+stable_release_ready = false
+blockers = [
+  "Persistent cross-process CLI session lifecycle is incomplete.",
+  "Architecture-specific HardFault diagnostics are not implemented.",
+  "RTOS awareness and ThreadX decoding are not validated.",
+  "SVD peripheral access and telemetry backends are not implemented.",
+  "Multi-version GitHub Actions and release-gate runs have not yet completed.",
+]

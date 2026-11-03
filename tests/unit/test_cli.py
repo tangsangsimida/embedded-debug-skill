@@ -1,0 +1,167 @@
+import json
+
+from embedded_debug.cli import run
+
+
+def test_doctor_json_reports_without_hardware(monkeypatch, capsys) -> None:
+    monkeypatch.setattr("embedded_debug.doctor.shutil.which", lambda _: None)
+    assert run(["--json", "doctor"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["success"] is True
+    assert data["command"] == "doctor"
+    assert "tools" in data["data"]
+
+
+def test_guarded_memory_write_refuses_without_authorization(capsys) -> None:
+    assert run(["--json", "memory-write", "0x20000000", "--value", "1"]) == 2
+    data = json.loads(capsys.readouterr().out)
+    assert data["error"]["code"] == "AUTHORIZATION_REQUIRED"
+
+
+def test_nested_command_syntax(capsys) -> None:
+    assert run(["config", "validate", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["command"] == "config-validate"
+
+
+def test_connect_reuses_existing_server_with_mock_gdb(tmp_path, capsys) -> None:
+    import socket
+    from pathlib import Path
+
+    fake_gdb = Path(__file__).parents[1] / "mocks" / "fake_gdb.py"
+    with socket.socket() as server:
+        server.bind(("127.0.0.1", 0))
+        server.listen()
+        port = server.getsockname()[1]
+        assert (
+            run(
+                [
+                    "--json",
+                    "--gdb",
+                    str(fake_gdb),
+                    "connect",
+                    "--host",
+                    "127.0.0.1",
+                    "--gdb-port",
+                    str(port),
+                    "--reuse-server",
+                ]
+            )
+            == 0
+        )
+    data = json.loads(capsys.readouterr().out)
+    assert data["target"]["connection"] == "connected"
+    assert data["target"]["architecture"] == "arm"
+
+
+def test_nested_session_start_status_stop_reuses_external_server(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    import socket
+    from pathlib import Path
+
+    fake_gdb = Path(__file__).parents[1] / "mocks" / "fake_gdb.py"
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    with socket.socket() as server:
+        server.bind(("127.0.0.1", 0))
+        server.listen()
+        port = server.getsockname()[1]
+        assert (
+            run(
+                [
+                    "--gdb",
+                    str(fake_gdb),
+                    "session",
+                    "start",
+                    "--host",
+                    "127.0.0.1",
+                    "--gdb-port",
+                    str(port),
+                    "--json",
+                ]
+            )
+            == 0
+        )
+        started = json.loads(capsys.readouterr().out)
+        assert started["data"]["session"] == "started"
+        assert started["data"]["architecture"] == "arm"
+        assert run(["--json", "session", "status"]) == 0
+        status = json.loads(capsys.readouterr().out)
+        assert status["data"]["active"] is True
+        assert run(["session", "stop", "--json"]) == 0
+        stopped = json.loads(capsys.readouterr().out)
+        assert stopped["data"]["stopped"] is False
+        assert server.fileno() >= 0
+
+
+def test_connect_uses_swappable_openocd_configs_without_source_edits(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    import socket
+    from pathlib import Path
+
+    fake_gdb = Path(__file__).parents[1] / "mocks" / "fake_gdb.py"
+    fake_openocd = Path(__file__).parents[1] / "mocks" / "fake_openocd.py"
+    args_file = tmp_path / "openocd-args.txt"
+    monkeypatch.setenv("EDBG_MOCK_OPENOCD_ARGS", str(args_file))
+    with socket.socket() as reserve:
+        reserve.bind(("127.0.0.1", 0))
+        port = reserve.getsockname()[1]
+    for interface, target in [
+        ("interface/adapter-a.cfg", "target/core-a.cfg"),
+        ("interface/adapter-b.cfg", "target/core-b.cfg"),
+    ]:
+        assert (
+            run(
+                [
+                    "--json",
+                    "--gdb",
+                    str(fake_gdb),
+                    "--openocd",
+                    str(fake_openocd),
+                    "connect",
+                    "--interface",
+                    interface,
+                    "--target",
+                    target,
+                    "--gdb-port",
+                    str(port),
+                ]
+            )
+            == 0
+        )
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["success"] is True
+        captured = args_file.read_text()
+        assert interface in captured
+        assert target in captured
+        assert f"gdb_port {port}" in captured
+
+
+def test_skill_launcher_never_installs_without_authorization(monkeypatch, capsys) -> None:
+    import importlib.metadata
+    import runpy
+    from pathlib import Path
+
+    script = Path(__file__).parents[2] / "skills/embedded-debug/scripts/run_edbg.py"
+    namespace = runpy.run_path(str(script))
+
+    def missing_package(_name: str) -> str:
+        raise importlib.metadata.PackageNotFoundError
+
+    monkeypatch.setattr(namespace["importlib"].metadata, "version", missing_package)
+    monkeypatch.setattr(namespace["shutil"], "which", lambda _name: None)
+    assert namespace["main"](["doctor", "--json"]) == 2
+    assert "explicit user authorization" in capsys.readouterr().err
+
+
+def test_json_build_keeps_json_clean_and_logs_on_stderr(tmp_path, capsys) -> None:
+    config = tmp_path / "edbg.toml"
+    config.write_text(
+        '[build]\ncommand=["python3", "-c", "print(\\"BUILD-LOG\\")"]\ndirectory="."\n'
+    )
+    assert run(["--json", "--config", str(config), "build"]) == 0
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["success"] is True
+    assert "BUILD-LOG" in captured.err

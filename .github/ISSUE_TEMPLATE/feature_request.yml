@@ -1,0 +1,24 @@
+name: Feature request
+description: Suggest a generic, capability-driven improvement.
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+    validations:
+      required: true
+  - type: checkboxes
+    id: generality
+    attributes:
+      label: Compatibility
+      options:
+        - label: This can be based on OpenOCD/GDB capabilities without an MCU vendor/model allowlist.
+          required: true

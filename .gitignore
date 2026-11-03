@@ -1,0 +1,36 @@
+# Python bytecode and package metadata
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Virtual environments and local tooling
+.venv/
+venv/
+.env
+
+# Build and distribution output
+build/
+dist/
+.dist/
+*.whl
+
+# Test, coverage, and type-check caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.tox/
+.nox/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Local embedded-debug configuration and runtime logs
+edbg.toml
+.edbg.toml
+.edbg/
+
+# OS-generated files
+.DS_Store
+Thumbs.db

@@ -1,0 +1,42 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "embedded-debug-skill"
+version = "0.1.0"
+description = "OpenOCD-driven universal embedded debugging CLI and Agent Skill"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{name = "EmbeddedDebug-Skill contributors"}]
+keywords = ["embedded", "debugging", "openocd", "gdb-mi", "agent-skill"]
+classifiers = ["Development Status :: 3 - Alpha", "Programming Language :: Python :: 3", "Operating System :: POSIX :: Linux"]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.9", "mypy>=1.14", "build>=1.2", "pip-audit>=2.7"]
+
+[project.scripts]
+edbg = "embedded_debug.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/embedded_debug"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+markers = ["hardware: requires explicit hardware test opt-in and a user-supplied configuration"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+mypy_path = "src"

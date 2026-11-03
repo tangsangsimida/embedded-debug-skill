@@ -1,0 +1,22 @@
+# Copy to the project root as edbg.toml and adjust paths/configuration.
+[tools]
+gdb = "arm-none-eabi-gdb"
+openocd = "openocd"
+gcc = "arm-none-eabi-gcc"
+
+[openocd]
+# OpenOCD configuration values are supplied by the user.
+interface = "interface/cmsis-dap.cfg"
+target = "target/your-target.cfg"
+host = "127.0.0.1"
+gdb_port = 3333
+adapter_khz = 1000
+commands = []
+
+[project]
+elf = "build/firmware.elf"
+
+[build]
+# Argument vector, no shell parsing; adapt to your project.
+command = ["cmake", "--build", "build"]
+directory = "."
