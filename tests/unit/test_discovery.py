@@ -130,6 +130,19 @@ def test_deduplicates_case_insensitive_makefile_aliases(tmp_path: Path, monkeypa
     assert options["config_files"] == ["interface/cmsis-dap.cfg"]
 
 
+def test_makefile_alias_dedup_uses_platform_path_normalization(
+    tmp_path: Path, monkeypatch
+) -> None:
+    (tmp_path / "Makefile").write_text(
+        "debug-server:\n\t@openocd -f interface/cmsis-dap.cfg\n", encoding="utf-8"
+    )
+    monkeypatch.setattr("embedded_debug.discovery.os.path.normcase", str.casefold)
+    monkeypatch.setattr("embedded_debug.discovery.Path.samefile", lambda *_: False)
+    monkeypatch.setattr("embedded_debug.discovery.OpenOCDManager.port_open", lambda *a: False)
+    result = discover_project(tmp_path)
+    assert len(result["openocd_candidates"]) == 1
+
+
 def test_does_not_guess_interpolated_openocd_script_arguments(tmp_path: Path, monkeypatch) -> None:
     scripts = tmp_path / "scripts"
     scripts.mkdir()

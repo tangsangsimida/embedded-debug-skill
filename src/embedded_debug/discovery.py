@@ -140,6 +140,17 @@ def _script_openocd_commands(root: Path) -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
     unique_paths: list[Path] = []
     for path in paths:
+        # Windows filesystems commonly resolve Makefile and makefile to the
+        # same entry. Path.samefile() is the strongest check when available;
+        # normcase also handles aliases when filesystem identity is unavailable
+        # (for example, a mocked path or a transient permission error).
+        normalized = os.path.normcase(str(path.resolve(strict=False)))
+        normalized_alias = any(
+            os.path.normcase(str(previous.resolve(strict=False))) == normalized
+            for previous in unique_paths
+        )
+        if normalized_alias:
+            continue
         try:
             if any(path.samefile(previous) for previous in unique_paths):
                 continue
