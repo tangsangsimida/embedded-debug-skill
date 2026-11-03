@@ -98,6 +98,13 @@ class DebugSessionDaemon:
         daemon_identity = get_platform().process_identity(os.getpid())
         if daemon_identity is None:
             raise SessionFailure("Could not verify the session daemon process identity")
+        gdb_identity = (
+            get_platform().process_identity(self.transport.process.pid)
+            if self.transport.process
+            else None
+        )
+        if gdb_identity is None:
+            raise SessionFailure("Could not verify the GDB process identity")
         save_session(
             {
                 "schema": 3,
@@ -130,12 +137,9 @@ class DebugSessionDaemon:
                 ),
                 "openocd_owned": self.manager.process is not None,
                 "gdb_pid": self.transport.process.pid if self.transport.process else None,
-                "gdb_process_executable": self.transport.process_executable,
-                "gdb_start_time": (
-                    process_start_time(self.transport.process.pid)
-                    if self.transport.process
-                    else None
-                ),
+                "gdb_process_executable": gdb_identity.executable,
+                "gdb_start_time": gdb_identity.created,
+                "gdb_username": gdb_identity.username,
                 "created_at": datetime.now(UTC).isoformat(),
             }
         )
