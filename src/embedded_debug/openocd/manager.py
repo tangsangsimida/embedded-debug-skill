@@ -26,6 +26,7 @@ class OpenOCDManager:
         self.executable, self.host, self.port = executable, host, port
         self.log_file = log_file
         self.process: subprocess.Popen[str] | None = None
+        self.process_executable: str | None = None
         self._log_handle: TextIO | None = None
 
     @staticmethod
@@ -53,6 +54,7 @@ class OpenOCDManager:
             # took over its port. Do not retain the stale process as our child.
             if self.process is not None and self.process.poll() is not None:
                 self.process = None
+                self.process_executable = None
                 if self._log_handle:
                     self._log_handle.close()
                     self._log_handle = None
@@ -99,6 +101,11 @@ class OpenOCDManager:
         self.process = subprocess.Popen(
             args, stdout=self._log_handle or subprocess.DEVNULL, stderr=subprocess.STDOUT, text=True
         )
+        proc_executable = Path(f"/proc/{self.process.pid}/exe")
+        try:
+            self.process_executable = str(proc_executable.resolve(strict=True))
+        except OSError:
+            self.process_executable = str(Path(exe).resolve())
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if self.process.poll() is not None:
@@ -123,6 +130,7 @@ class OpenOCDManager:
                 self.process.kill()
                 self.process.wait()
         self.process = None
+        self.process_executable = None
         if self._log_handle:
             self._log_handle.close()
             self._log_handle = None

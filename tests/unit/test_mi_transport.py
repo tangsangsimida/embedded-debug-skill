@@ -40,3 +40,14 @@ def test_reconnect_restarts_debugger_process() -> None:
     assert transport.process.pid != first_pid
     assert transport.command("-gdb-show architecture").results["value"] == "arm"
     transport.close()
+
+
+def test_stderr_is_drained_concurrently_without_blocking_mi(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("EDBG_FAKE_GDB_STDERR_BYTES", "262144")
+    transport = MITransport(str(MOCK_GDB), timeout=2)
+    try:
+        transport.start()
+        assert transport.command("-gdb-show architecture").results["value"] == "arm"
+        assert transport.stderr_tail
+    finally:
+        transport.close()

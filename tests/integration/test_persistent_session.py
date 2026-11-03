@@ -15,7 +15,8 @@ from typing import Any
 
 import pytest
 
-from embedded_debug.session_store import read_session
+from embedded_debug.session_manager import SessionManagerError, start_session
+from embedded_debug.session_store import gdb_identity_matches, process_alive, read_session
 
 MOCKS = Path(__file__).parents[1] / "mocks"
 
@@ -175,6 +176,78 @@ def test_flash_reuses_project_task_only_after_explicit_command_authorization(
         _stop(tmp_path, env)
 
 
+def test_startup_timeout_cleans_gdb_child_before_aborting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _env(monkeypatch, tmp_path)
+    delay_file = tmp_path / "delay-target-select"
+    delay_file.touch()
+    monkeypatch.setenv("EDBG_FAKE_GDB_TARGET_DELAY_FILE", str(delay_file))
+    server = _listener()
+    settings = {
+        "host": "127.0.0.1",
+        "gdb_port": server.getsockname()[1],
+        "openocd_config": None,
+        "interface": None,
+        "target_config": None,
+        "board": None,
+        "config_files": [],
+        "server_args": [],
+        "commands": [],
+        "adapter_khz": None,
+        "openocd_executable": "openocd",
+        "gdb_executable": str(MOCKS / "fake_gdb.py"),
+        "gdb_timeout": 10.0,
+        "elf": None,
+    }
+    try:
+        with pytest.raises(SessionManagerError, match="did not become ready"):
+            start_session(settings, timeout=0.3)
+        start_records = [
+            line
+            for line in (tmp_path / "gdb.log").read_text().splitlines()
+            if line.startswith("START ")
+        ]
+        assert len(start_records) == 1
+        assert not process_alive(int(start_records[0].split()[1]))
+        assert read_session() is None
+    finally:
+        server.close()
+
+
+def test_untrusted_workspace_build_task_does_not_run_without_authorization(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = _env(monkeypatch, tmp_path)
+    vscode = tmp_path / ".vscode"
+    vscode.mkdir()
+    marker = tmp_path / "build-invoked"
+    task = {
+        "version": "2.0.0",
+        "tasks": [
+            {
+                "label": "build firmware",
+                "type": "process",
+                "command": sys.executable,
+                "args": ["-c", f"from pathlib import Path; Path({str(marker)!r}).touch()"],
+            }
+        ],
+    }
+    (vscode / "tasks.json").write_text(json.dumps(task), encoding="utf-8")
+    try:
+        code, refused = _invoke(tmp_path, env, "build")
+        assert code == 2
+        assert "authorize-command" in refused["error"]["message"]
+        assert not marker.exists()
+
+        code, built = _invoke(tmp_path, env, "build", "--authorize-command")
+        assert code == 0, built
+        assert marker.exists()
+        assert built["data"]["exit_code"] == 0
+    finally:
+        _stop(tmp_path, env)
+
+
 def test_commands_across_independent_processes_keep_gdb_context(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -271,6 +344,68 @@ def test_parallel_cli_requests_are_serialized_and_keep_one_gdb_process(
             if line.startswith("START ")
         ]
         assert len(starts) == 1
+    finally:
+        _stop(tmp_path, env)
+        server.close()
+
+
+def test_active_gdb_command_can_be_cancelled_from_another_cli_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = _env(monkeypatch, tmp_path)
+    server = _listener()
+    try:
+        _start(
+            tmp_path,
+            env,
+            server.getsockname()[1],
+            "--gdb",
+            str(MOCKS / "fake_gdb.py"),
+        )
+        initial = read_session()
+        assert initial and initial["gdb_pid"]
+        command = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "embedded_debug.cli",
+                "--json",
+                "variable",
+                "read",
+                "hang_value",
+            ],
+            cwd=tmp_path,
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        deadline = time.monotonic() + 4
+        while time.monotonic() < deadline:
+            if '-data-evaluate-expression "hang_value"' in (tmp_path / "gdb.log").read_text():
+                break
+            time.sleep(0.02)
+        else:
+            command.kill()
+            raise AssertionError("long-running GDB/MI operation did not start")
+
+        code, denied = _invoke(tmp_path, env, "session", "cancel")
+        assert code == 2
+        assert "authorize-run" in denied["error"]["message"]
+        code, cancelled = _invoke(
+            tmp_path, env, "session", "cancel", "--authorize-run"
+        )
+        assert code == 0, cancelled
+        stdout, _stderr = command.communicate(timeout=5)
+        operation = json.loads(stdout)
+        assert command.returncode == 2
+        assert "interrupted" in operation["error"]["message"]
+
+        code, status = _invoke(tmp_path, env, "session", "status")
+        assert code == 0
+        assert status["data"]["active"] is True
+        assert status["data"]["target_state"] == "halted"
+        assert status["data"]["gdb_pid"] == initial["gdb_pid"]
     finally:
         _stop(tmp_path, env)
         server.close()
@@ -403,6 +538,87 @@ def test_external_gdb_server_disconnect_is_detected_in_band_and_recovered(
         assert code == 0, recovered
         code, status = _invoke(tmp_path, env, "session", "status")
         assert code == 0 and status["data"]["target_link"] == "verified"
+    finally:
+        _stop(tmp_path, env)
+        server.close()
+
+
+def test_gdb_health_probe_timeout_is_unknown_not_disconnected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = _env(monkeypatch, tmp_path)
+    timeout_file = tmp_path / "health-timeout"
+    env["EDBG_FAKE_GDB_REGISTER_TIMEOUT_FILE"] = str(timeout_file)
+    monkeypatch.setenv("EDBG_FAKE_GDB_REGISTER_TIMEOUT_FILE", str(timeout_file))
+    server = _listener()
+    try:
+        _start(
+            tmp_path,
+            env,
+            server.getsockname()[1],
+            "--gdb",
+            str(MOCKS / "fake_gdb.py"),
+            "--gdb-timeout",
+            "0.08",
+        )
+        timeout_file.touch()
+        code, status = _invoke(tmp_path, env, "session", "status")
+        assert code == 0
+        assert status["data"]["active"] is True
+        assert status["data"]["target_state"] == "unknown"
+        assert status["data"]["target_link"] == "unknown"
+        assert "timed out" in status["data"]["target_link_error"]
+        timeout_file.unlink()
+
+        code, recovered = _invoke(tmp_path, env, "session", "recover")
+        assert code == 0, recovered
+        code, status = _invoke(tmp_path, env, "session", "status")
+        assert code == 0 and status["data"]["target_link"] == "verified"
+    finally:
+        _stop(tmp_path, env)
+        server.close()
+
+
+def test_killed_manager_reaps_only_its_orphaned_gdb_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = _env(monkeypatch, tmp_path)
+    server = _listener()
+    try:
+        _start(
+            tmp_path,
+            env,
+            server.getsockname()[1],
+            "--gdb",
+            str(MOCKS / "fake_gdb.py"),
+        )
+        record = read_session()
+        assert record and gdb_identity_matches(record)
+        daemon_pid, gdb_pid = record["daemon_pid"], record["gdb_pid"]
+        os.kill(daemon_pid, signal.SIGKILL)
+        deadline = time.monotonic() + 4
+        while time.monotonic() < deadline and process_alive(daemon_pid):
+            time.sleep(0.02)
+        assert not process_alive(daemon_pid)
+
+        code, status = _invoke(tmp_path, env, "session", "status")
+        assert code == 0 and status["data"]["active"] is False
+        assert not process_alive(gdb_pid)
+        assert read_session() is None
+
+        _start(
+            tmp_path,
+            env,
+            server.getsockname()[1],
+            "--gdb",
+            str(MOCKS / "fake_gdb.py"),
+        )
+        starts = [
+            line
+            for line in (tmp_path / "gdb.log").read_text().splitlines()
+            if line.startswith("START ")
+        ]
+        assert len(starts) == 2
     finally:
         _stop(tmp_path, env)
         server.close()

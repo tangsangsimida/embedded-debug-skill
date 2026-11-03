@@ -2,6 +2,7 @@
 """Stateful GDB/MI mock used by process-boundary session integration tests."""
 
 import os
+import signal
 import sys
 import threading
 import time
@@ -10,6 +11,15 @@ _write_lock = threading.Lock()
 _breakpoints: list[str] = []
 _number = 0
 _current_thread = "1"
+_cancel_requested = False
+
+
+def request_cancel(_signum, _frame) -> None:
+    global _cancel_requested
+    _cancel_requested = True
+
+
+signal.signal(signal.SIGINT, request_cancel)
 
 
 def emit(line: str) -> None:
@@ -25,6 +35,13 @@ def log(line: str) -> None:
 
 
 log(f"START {os.getpid()}")
+stderr_bytes = int(os.environ.get("EDBG_FAKE_GDB_STDERR_BYTES", "0"))
+while stderr_bytes > 0:
+    chunk = b"mock diagnostic line\n" * min(2000, stderr_bytes // 21)
+    if not chunk:
+        chunk = b"x"
+    written = os.write(2, chunk)
+    stderr_bytes -= written
 for line in sys.stdin:
     command = line.rstrip("\n")
     original = command
@@ -42,6 +59,9 @@ for line in sys.stdin:
     if command == "-gdb-exit":
         break
     if command.startswith("-target-select"):
+        delay_file = os.environ.get("EDBG_FAKE_GDB_TARGET_DELAY_FILE")
+        if delay_file and os.path.isfile(delay_file):
+            time.sleep(60)
         emit(f"{token}^connected")
         emit('*stopped,reason="breakpoint-hit",thread-id="1"')
     elif command == "-gdb-show architecture":
@@ -64,6 +84,9 @@ for line in sys.stdin:
             _breakpoints.remove(number)
         emit(f"{token}^done")
     elif command == "-data-list-register-values x":
+        timeout_file = os.environ.get("EDBG_FAKE_GDB_REGISTER_TIMEOUT_FILE")
+        if timeout_file and os.path.isfile(timeout_file):
+            time.sleep(0.3)
         link_file = os.environ.get("EDBG_FAKE_GDB_LINK_FILE")
         if link_file and os.path.isfile(link_file):
             emit(f'{token}^error,msg="Remote connection closed"')
@@ -72,6 +95,13 @@ for line in sys.stdin:
             f'{token}^done,register-values=[{{number="0",value="0x2a"}},{{number="1",value="0x08000100"}}]'
         )
     elif command.startswith("-data-evaluate-expression"):
+        if "hang" in command:
+            while not _cancel_requested:
+                time.sleep(0.02)
+            _cancel_requested = False
+            emit('*stopped,reason="signal-received",signal-name="SIGINT"')
+            emit(f'{token}^error,msg="interrupted"')
+            continue
         if "slow" in command:
             time.sleep(0.3)
         value = "42" if "fast" not in command else "7"

@@ -38,7 +38,7 @@ edbg backtrace --json
 edbg session stop
 ```
 
-发现逻辑会检查 VS Code launch/tasks、OpenOCD 命令参数、CMake/Make/PlatformIO、ELF 和常见本机 GDB Server 端口。若现有配置已明确，直接复用；只有发现结果不明确时才补充参数。无需创建 `.edbg.toml`，也不要求独立 `target.cfg`：IDE 启动配置、board/full config 或命令行参数都可提供目标配置。`connect` 会自动复用已运行的本机 GDB Server，并通过 GDB 验证连接和目标响应；持久 GDB/MI 会话供后续独立 CLI 命令复用。
+发现逻辑会检查 VS Code launch/tasks、OpenOCD 命令参数、CMake/Make/PlatformIO、ELF 和常见本机 GDB Server 端口。若现有配置已明确，直接复用；只有发现结果不明确时才补充参数。无需创建 `.edbg.toml`，也不要求独立 `target.cfg`：IDE 启动配置、board/full config 或命令行参数都可提供目标配置。`connect` 会自动复用已运行的本机 GDB Server，并通过 GDB 验证连接和目标响应；持久 GDB/MI 会话供后续独立 CLI 命令复用。若某个 GDB 命令卡住，可在另一个终端运行 `edbg session cancel --authorize-run`；该操作可能暂停目标。
 需要时可直接引用完整 OpenOCD 配置或已有 interface/target 脚本：
 
 ```sh

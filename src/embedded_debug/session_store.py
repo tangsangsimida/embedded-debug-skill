@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import select
 import signal
 import time
 from pathlib import Path
@@ -44,39 +45,21 @@ def process_alive(pid: int) -> bool:
     return True
 
 
-def daemon_identity_matches(info: dict[str, Any]) -> bool:
+def _process_identity(
+    info: dict[str, Any], pid_key: str, start_key: str, executable_key: str
+) -> str:
+    """Return match/stale/unknown; unknown must never authorize cleanup or replacement."""
     try:
-        pid = int(info["daemon_pid"])
+        pid = int(info[pid_key])
     except (KeyError, TypeError, ValueError):
-        return False
-    if not process_alive(pid) or process_start_time(pid) != str(info.get("process_start_time")):
-        return False
-    status_path = Path(f"/proc/{pid}/status")
-    try:
-        uid_line = next(
-            line for line in status_path.read_text().splitlines() if line.startswith("Uid:")
-        )
-        if int(uid_line.split()[1]) != os.getuid():
-            return False
-    except (OSError, StopIteration, ValueError, IndexError):
-        return False
-    command_path = Path(f"/proc/{pid}/cmdline")
-    if not command_path.is_file():
-        return False
-    try:
-        argv = command_path.read_bytes().decode(errors="replace").split("\0")
-    except OSError:
-        return False
-    return "embedded_debug.session_daemon" in argv and str(info.get("session_id")) in argv
-
-
-def openocd_identity_matches(info: dict[str, Any]) -> bool:
-    try:
-        pid = int(info["openocd_pid"])
-    except (KeyError, TypeError, ValueError):
-        return False
-    if not process_alive(pid) or process_start_time(pid) != str(info.get("openocd_start_time")):
-        return False
+        return "stale"
+    if not process_alive(pid):
+        return "stale"
+    start_time = process_start_time(pid)
+    if start_time is None:
+        return "unknown"
+    if start_time != str(info.get(start_key)):
+        return "stale"
     try:
         uid_line = next(
             line
@@ -84,21 +67,125 @@ def openocd_identity_matches(info: dict[str, Any]) -> bool:
             if line.startswith("Uid:")
         )
         if int(uid_line.split()[1]) != os.getuid():
-            return False
-        command = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode()
+            return "stale"
+        actual_executable = str(Path(f"/proc/{pid}/exe").resolve(strict=True))
     except (OSError, StopIteration, ValueError, IndexError):
+        return "unknown"
+    expected_executable = info.get(executable_key)
+    if not isinstance(expected_executable, str) or not expected_executable:
+        return "unknown"
+    try:
+        if actual_executable != str(Path(expected_executable).resolve(strict=True)):
+            return "stale"
+    except OSError:
+        return "unknown"
+    return "match"
+
+
+def daemon_identity_status(info: dict[str, Any]) -> str:
+    status = _process_identity(
+        info, "daemon_pid", "process_start_time", "python_executable"
+    )
+    if status != "match":
+        return status
+    pid = int(info["daemon_pid"])
+    try:
+        argv = Path(f"/proc/{pid}/cmdline").read_bytes().decode(errors="replace").split("\0")
+    except OSError:
+        return "unknown"
+    if "embedded_debug.session_daemon" not in argv or str(info.get("session_id")) not in argv:
+        return "stale"
+    return "match"
+
+
+def daemon_identity_matches(info: dict[str, Any]) -> bool:
+    return daemon_identity_status(info) == "match"
+
+
+def daemon_identity_is_stale(info: dict[str, Any]) -> bool:
+    return daemon_identity_status(info) == "stale"
+
+
+def openocd_identity_matches(info: dict[str, Any]) -> bool:
+    return _process_identity(
+        info, "openocd_pid", "openocd_start_time", "openocd_process_executable"
+    ) == "match"
+
+
+def gdb_identity_matches(info: dict[str, Any]) -> bool:
+    if _process_identity(info, "gdb_pid", "gdb_start_time", "gdb_process_executable") != "match":
         return False
-    executable = Path(str(info.get("openocd_executable", "openocd"))).name
-    return bool(executable and executable in command)
+    try:
+        argv = Path(f"/proc/{int(info['gdb_pid'])}/cmdline").read_bytes().decode().split("\0")
+    except (OSError, TypeError, ValueError, KeyError):
+        return False
+    return "--interpreter=mi2" in argv
+
+
+def _terminate_verified_process(
+    info: dict[str, Any],
+    pid_key: str,
+    start_key: str,
+    executable_key: str,
+    identity_check: Any,
+    timeout: float,
+) -> bool:
+    try:
+        pid = int(info[pid_key])
+    except (KeyError, TypeError, ValueError):
+        return False
+    pidfd: int | None = None
+    try:
+        if hasattr(os, "pidfd_open"):
+            pidfd = os.pidfd_open(pid)
+        if not identity_check(info):
+            return False
+        if pidfd is not None and hasattr(signal, "pidfd_send_signal"):
+            signal.pidfd_send_signal(pidfd, signal.SIGTERM)
+            readable, _, _ = select.select([pidfd], [], [], timeout)
+            if readable:
+                return True
+            signal.pidfd_send_signal(pidfd, signal.SIGKILL)
+            readable, _, _ = select.select([pidfd], [], [], timeout)
+            return bool(readable)
+        os.kill(pid, signal.SIGTERM)
+        if wait_process_exit(pid, timeout):
+            return True
+        if _process_identity(info, pid_key, start_key, executable_key) != "match":
+            return False
+        os.kill(pid, signal.SIGKILL)
+        return wait_process_exit(pid, timeout)
+    except (OSError, ProcessLookupError):
+        return not process_alive(pid)
+    finally:
+        if pidfd is not None:
+            os.close(pidfd)
 
 
 def stop_stale_owned_openocd(info: dict[str, Any], timeout: float = 3.0) -> bool:
     """Stop only a child whose UID, PID start time, and executable still match its record."""
-    if not info.get("openocd_owned") or not openocd_identity_matches(info):
+    if not info.get("openocd_owned"):
         return False
-    pid = int(info["openocd_pid"])
-    os.kill(pid, signal.SIGTERM)
-    return wait_process_exit(pid, timeout)
+    return _terminate_verified_process(
+        info,
+        "openocd_pid",
+        "openocd_start_time",
+        "openocd_process_executable",
+        openocd_identity_matches,
+        timeout,
+    )
+
+
+def stop_stale_owned_gdb(info: dict[str, Any], timeout: float = 3.0) -> bool:
+    """Stop only the exact GDB/MI child recorded by this session manager."""
+    return _terminate_verified_process(
+        info,
+        "gdb_pid",
+        "gdb_start_time",
+        "gdb_process_executable",
+        gdb_identity_matches,
+        timeout,
+    )
 
 
 def read_session() -> dict[str, Any] | None:

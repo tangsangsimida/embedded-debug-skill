@@ -24,7 +24,14 @@ jobs:
           node-version: '22'
       - name: Create isolated agent home
         run: mkdir -p "$RUNNER_TEMP/agent-home"
-      - name: Install candidate Skill with Skills CLI
+      - name: Install Skill from public GitHub repository
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: npx --yes skills@1.7.6 add tangsangsimida/embedded-debug-skill --skill embedded-debug --agent "${{ matrix.agent }}" --copy -g -y
+        env:
+          HOME: ${{ runner.temp }}/agent-home
+          DISABLE_TELEMETRY: '1'
+      - name: Install pull request candidate from the checked out tree
+        if: github.event_name != 'push' || github.ref != 'refs/heads/main'
         run: npx --yes skills@1.7.6 add . --skill embedded-debug --agent "${{ matrix.agent }}" --copy -g -y
         env:
           HOME: ${{ runner.temp }}/agent-home
@@ -49,6 +56,12 @@ jobs:
           assert 'edbg doctor --json' in text
           assert 'explicit user authorization' in text
           assert 'scripts/run_edbg.py' in text
+          expected = Path('skills/embedded-debug')
+          for source in expected.rglob('*'):
+              if source.is_file():
+                  installed = root / source.relative_to(expected)
+                  assert installed.is_file(), source
+                  assert installed.read_bytes() == source.read_bytes(), source
           PY
       - name: Bootstrap CLI from the Skill's immutable source pin
         env:

@@ -27,6 +27,7 @@ class GDBTimeout(GDBError):
 class MITransport:
     def __init__(self, executable: str = "arm-none-eabi-gdb", timeout: float = 10.0) -> None:
         self.executable, self.timeout = executable, timeout
+        self.process_executable: str | None = None
         self.process: subprocess.Popen[str] | None = None
         self._records: queue.Queue[MIRecord] = queue.Queue()
         self._lock = threading.Lock()
@@ -47,7 +48,12 @@ class MITransport:
         if executable is None:
             raise GDBError(f"GDB executable not found: {self.executable}")
         executable_path = Path(executable)
-        if executable_path.suffix == ".py" and not executable_path.stat().st_mode & 0o111:
+        python_script = executable_path.suffix == ".py" and not (
+            executable_path.stat().st_mode & 0o111
+        )
+        process_executable = sys.executable if python_script else executable
+        self.process_executable = str(Path(process_executable).resolve())
+        if python_script:
             args = [sys.executable, executable, "--interpreter=mi2", "--quiet", *extra_args]
         else:
             args = [executable, "--interpreter=mi2", "--quiet", *extra_args]
@@ -61,6 +67,11 @@ class MITransport:
             text=True,
             bufsize=1,
         )
+        proc_executable = Path(f"/proc/{self.process.pid}/exe")
+        try:
+            self.process_executable = str(proc_executable.resolve(strict=True))
+        except OSError:
+            pass
         self.state = "unknown"
         self._reader = threading.Thread(target=self._read_stdout, daemon=True)
         self._reader.start()
@@ -166,6 +177,9 @@ class MITransport:
         """Interrupt a blocked debugger operation; target execution may halt."""
         if not self.process or self.process.poll() is not None:
             raise GDBError("GDB session is disconnected")
+        if self._lock.acquire(blocking=False):
+            self._lock.release()
+            raise GDBError("No in-flight GDB/MI operation is available to cancel")
         self.process.send_signal(signal.SIGINT)
         self.state = "unknown"
 

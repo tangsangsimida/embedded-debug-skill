@@ -37,6 +37,9 @@ class DebugSessionDaemon:
         self.lock_handle: Any = None
         self.server: socket.socket | None = None
         self.stopping = threading.Event()
+        self._operation_lock = threading.Lock()
+        self._client_lock = threading.Lock()
+        self._client_threads: set[threading.Thread] = set()
         self.manager = OpenOCDManager(
             settings["openocd_executable"],
             settings["host"],
@@ -72,7 +75,11 @@ class DebugSessionDaemon:
             config_files=self.settings.get("config_files", []),
             extra_args=self.settings.get("server_args", []),
         )
+        if self.stopping.is_set():
+            raise SessionFailure("Session shutdown requested during OpenOCD startup")
         self._connect_gdb()
+        if self.stopping.is_set():
+            raise SessionFailure("Session shutdown requested during GDB startup")
         socket_path = root / "debug-session.sock"
         socket_path.unlink(missing_ok=True)
         server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -105,11 +112,13 @@ class DebugSessionDaemon:
                 "commands": self.settings.get("commands", []),
                 "adapter_khz": self.settings.get("adapter_khz"),
                 "openocd_pid": self.manager.process.pid if self.manager.process else None,
+                "openocd_process_executable": self.manager.process_executable,
                 "openocd_start_time": (
                     process_start_time(self.manager.process.pid) if self.manager.process else None
                 ),
                 "openocd_owned": self.manager.process is not None,
                 "gdb_pid": self.transport.process.pid if self.transport.process else None,
+                "gdb_process_executable": self.transport.process_executable,
                 "gdb_start_time": (
                     process_start_time(self.transport.process.pid)
                     if self.transport.process
@@ -151,9 +160,21 @@ class DebugSessionDaemon:
                 if self.manager.process and self.manager.process.poll() is not None:
                     self.transport.state = "disconnected"
                 continue
+            worker = threading.Thread(
+                target=self._handle_connection, args=(connection,), daemon=True
+            )
+            with self._client_lock:
+                self._client_threads.add(worker)
+            worker.start()
+
+    def _handle_connection(self, connection: socket.socket) -> None:
+        try:
             with connection:
                 connection.settimeout(150.0)
                 self._serve_connection(connection)
+        finally:
+            with self._client_lock:
+                self._client_threads.discard(threading.current_thread())
 
     def _serve_connection(self, connection: socket.socket) -> None:
         stream = connection.makefile("rb")
@@ -172,7 +193,11 @@ class DebugSessionDaemon:
             params = request.get("params", {})
             if not isinstance(params, dict):
                 raise SessionFailure("IPC params must be an object")
-            response = self._dispatch(str(operation), params)
+            if operation == "cancel":
+                response = self._dispatch(str(operation), params)
+            else:
+                with self._operation_lock:
+                    response = self._dispatch(str(operation), params)
         except (
             ValueError,
             TypeError,
@@ -247,6 +272,7 @@ class DebugSessionDaemon:
             record.update(
                 {
                     "openocd_pid": self.manager.process.pid if self.manager.process else None,
+                    "openocd_process_executable": self.manager.process_executable,
                     "openocd_start_time": (
                         process_start_time(self.manager.process.pid)
                         if self.manager.process
@@ -254,6 +280,7 @@ class DebugSessionDaemon:
                     ),
                     "openocd_owned": self.manager.process is not None,
                     "gdb_pid": self.transport.process.pid if self.transport.process else None,
+                    "gdb_process_executable": self.transport.process_executable,
                     "gdb_start_time": (
                         process_start_time(self.transport.process.pid)
                         if self.transport.process
@@ -271,6 +298,7 @@ class DebugSessionDaemon:
             self.transport.state = "disconnected"
         if operation == "status":
             link_state = "unknown"
+            link_error: str | None = None
             if self.transport.state == "halted" and self.transport.process:
                 try:
                     self.transport.command(
@@ -278,9 +306,18 @@ class DebugSessionDaemon:
                         timeout=min(2.0, float(self.settings.get("gdb_timeout", 10.0))),
                     )
                     link_state = "verified"
-                except (GDBError, GDBTimeout):
-                    self.transport.state = "disconnected"
-                    link_state = "disconnected"
+                except GDBTimeout as exc:
+                    self.transport.state = "unknown"
+                    link_state = "unknown"
+                    link_error = str(exc)
+                except GDBError as exc:
+                    link_error = str(exc)
+                    if self._is_link_failure(exc):
+                        self.transport.state = "disconnected"
+                        link_state = "disconnected"
+                    else:
+                        self.transport.state = "unknown"
+                        link_state = "unknown"
             elif self.transport.state == "running":
                 link_state = "unverified_running"
             connected = (
@@ -292,6 +329,7 @@ class DebugSessionDaemon:
                 "data": {
                     "active": connected,
                     "target_link": link_state,
+                    "target_link_error": link_error,
                     "target": self.target,
                     "target_state": self.transport.state,
                     "host": self.settings["host"],
@@ -330,6 +368,18 @@ class DebugSessionDaemon:
             return {
                 "success": True,
                 "data": {"stopping": True},
+                "target_state": self.transport.state,
+            }
+        if operation == "cancel":
+            if not params.get("authorized_run"):
+                raise PermissionError(
+                    "Cancelling a GDB operation requires explicit --authorize-run"
+                )
+            self.transport.cancel()
+            return {
+                "success": True,
+                "data": {"cancel_requested": True},
+                "target": self.target,
                 "target_state": self.transport.state,
             }
         if operation in {"continue", "step", "next"} and not params.get("authorized_run"):
@@ -432,6 +482,23 @@ class DebugSessionDaemon:
             "capabilities": self.capabilities,
         }
 
+    def _is_link_failure(self, error: GDBError) -> bool:
+        if not self.transport.process or self.transport.process.poll() is not None:
+            return True
+        message = str(error).lower()
+        return any(
+            phrase in message
+            for phrase in (
+                "remote connection closed",
+                "connection reset by peer",
+                "connection refused",
+                "remote failure reply",
+                "target disconnected",
+                "target is not responding",
+                "not connected",
+            )
+        )
+
     def close(self) -> None:
         self.stopping.set()
         if self.server:
@@ -439,6 +506,11 @@ class DebugSessionDaemon:
             self.server = None
         socket_path = session_dir() / "debug-session.sock"
         socket_path.unlink(missing_ok=True)
+        with self._client_lock:
+            clients = list(self._client_threads)
+        for worker in clients:
+            if worker is not threading.current_thread():
+                worker.join(timeout=1.0)
         self.transport.close()
         self.manager.stop()
         clear_session(self.session_id)
@@ -457,6 +529,8 @@ def _main() -> int:
 
     def stop_handler(_signum: int, _frame: Any) -> None:
         daemon.stopping.set()
+        daemon.transport.close()
+        daemon.manager.stop()
 
     signal.signal(signal.SIGTERM, stop_handler)
     signal.signal(signal.SIGINT, stop_handler)
