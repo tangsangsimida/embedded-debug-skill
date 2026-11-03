@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 from pathlib import Path
 from typing import Any
 
@@ -127,6 +128,58 @@ def _task_commands(root: Path) -> list[dict[str, Any]]:
     return tasks
 
 
+def _script_openocd_commands(root: Path) -> list[dict[str, Any]]:
+    """Extract literal OpenOCD invocations from common existing build files."""
+    paths = [root / "CMakeLists.txt", root / "Makefile", root / "makefile"]
+    paths.extend(sorted(root.glob("*.mk")))
+    paths.extend(sorted(root.glob("*.sh")))
+    paths.extend(sorted((root / "scripts").glob("*.sh")))
+    paths.extend(sorted((root / "debug").glob("*.sh")))
+    candidates: list[dict[str, Any]] = []
+    for path in dict.fromkeys(paths):
+        if not path.is_file():
+            continue
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        for line_number, line in enumerate(lines, 1):
+            if "openocd" not in line.lower():
+                continue
+            # A CMake COMMAND keyword or Make recipe marker is syntax, not an
+            # executable argument. Shell operators are not executed by discovery.
+            source_line = line.strip().lstrip("@+").strip()
+            try:
+                tokens = shlex.split(source_line, comments=True, posix=True)
+            except ValueError:
+                continue
+            index = next(
+                (
+                    i
+                    for i, token in enumerate(tokens)
+                    if Path(token.lstrip("@+")).name.lower() == "openocd"
+                    or token.strip("${}").lower() in {"openocd", "openocd_executable"}
+                ),
+                None,
+            )
+            if index is None:
+                continue
+            executable = tokens[index].lstrip("@+")
+            candidates.append(
+                {
+                    "source": f"{path}:{line_number}",
+                    "config_files": [],
+                    "commands": [],
+                    "server_args": tokens[index + 1 :],
+                    "server_path": executable if "/" in executable else None,
+                    "requires_review": any(
+                        "$" in token or "${" in token for token in tokens[index + 1 :]
+                    ),
+                }
+            )
+    return candidates
+
+
 def _build_candidate(root: Path, tasks: list[dict[str, Any]]) -> dict[str, Any] | None:
     for task in tasks:
         label = str(task.get("label", "")).lower()
@@ -216,6 +269,7 @@ def discover_project(
                 "task": task.get("label"),
             }
         )
+    config_candidates.extend(_script_openocd_commands(project))
     flash_task = next(
         (
             task
@@ -252,6 +306,8 @@ def openocd_launch_options(discovery: dict[str, Any]) -> dict[str, Any]:
     if len(candidates) != 1:
         return {}
     candidate = candidates[0]
+    if candidate.get("requires_review"):
+        return {}
     server_args = list(candidate.get("server_args", []))
     # Command based project configurations are already complete argv vectors.
     # IDE launch settings can combine serverArgs with separate config fields.

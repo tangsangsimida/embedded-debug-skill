@@ -2,9 +2,9 @@
 [release]
 stable_release_ready = false
 blockers = [
-  "Persistent cross-process CLI session lifecycle is incomplete.",
+  "No physical target/adapter end-to-end test has been run for this candidate.",
   "Architecture-specific HardFault diagnostics are not implemented.",
   "RTOS awareness and ThreadX decoding are not validated.",
   "SVD peripheral access and telemetry backends are not implemented.",
-  "The exact candidate has not passed a formal Release Gate; stable-release acceptance remains incomplete.",
+  "The exact release candidate has not passed the isolated Skills CLI and CLI-install release gate.",
 ]

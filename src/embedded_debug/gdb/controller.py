@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from ..models import CapabilitySet
@@ -39,7 +40,7 @@ class GDBController:
         try:
             result = self.mi.command("-data-list-register-names")
             self.registers = list((result.results or {}).get("register-names", []))
-            if self.registers:
+            if self.registers and self.mi.state == "halted":
                 self.mi.command("-data-list-register-values x")
                 self.capabilities.register_read = "supported"
         except Exception:
@@ -76,6 +77,11 @@ class GDBController:
 
     def backtrace(self) -> Any:
         return (self.mi.command("-stack-list-frames").results or {}).get("stack", [])
+
+    def thread_select(self, thread_id: str) -> Any:
+        if not re.fullmatch(r"[0-9]+(?:\.[0-9]+)*", thread_id):
+            raise ValueError("GDB thread id must be a numeric or dotted numeric id")
+        return self.mi.command(f"-thread-select {thread_id}").results
 
     def breakpoint_add(self, location: str) -> Any:
         return self.mi.command(f"-break-insert {mi_quote(location)}").results

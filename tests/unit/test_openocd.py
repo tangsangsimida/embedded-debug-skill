@@ -23,3 +23,21 @@ def test_openocd_start_failure_is_reported_and_reaped(tmp_path, monkeypatch) -> 
         manager.start(timeout=1)
     manager.stop()
     assert manager.process is None
+
+
+def test_reused_server_does_not_keep_dead_child_as_owned(tmp_path, monkeypatch) -> None:
+    class ExitedProcess:
+        def poll(self) -> int:
+            return 1
+
+    manager = OpenOCDManager(log_file=tmp_path / "openocd.log")
+    manager.process = ExitedProcess()  # type: ignore[assignment]
+    manager._log_handle = (tmp_path / "stale.log").open("w")
+    monkeypatch.setattr(
+        "embedded_debug.openocd.manager.OpenOCDManager.port_open", lambda *args: True
+    )
+
+    manager.start()
+
+    assert manager.process is None
+    assert manager._log_handle is None

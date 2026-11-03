@@ -13,7 +13,7 @@ CLI 需要 Python 3.11+。硬件调试还需要用户自行安装的 OpenOCD、�
 
 项目按 OpenOCD、GDB 架构和实际探测响应确定可用能力，不维护芯片厂商白名单。用户直接提供 interface/target/board 配置、完整 OpenOCD 配置或自定义初始化命令；切换目标或调试器不要求修改 Python 源码。未知能力保持 `unknown`。
 
-候选代码已实现工具链 PATH 诊断、现有项目配置发现、OpenOCD 子进程管理、持久化且串行化的 GDB/MI2 传输、基本 GDB 操作、Codex/Claude Skills CLI 安装验证和 Mock 测试。尚无稳定 Release；`release-readiness.toml` 会在缺少验收项时阻止发布。HardFault/ThreadX/SVD/遥测、跨 CLI 持久会话和实体硬件链路尚未验证。
+候选代码已实现工具链 PATH 诊断、现有项目配置发现、OpenOCD 服务复用与子进程管理、跨 CLI 持久化且串行化的 GDB/MI2 会话、基本 GDB 操作、Codex/Claude Skills CLI 安装验证和 Mock 测试。尚无稳定 Release；`release-readiness.toml` 会在缺少验收项时阻止发布。HardFault/ThreadX/SVD/遥测和实体硬件链路尚未验证。
 
 ## 安装 CLI 与快速检查
 
@@ -38,7 +38,7 @@ edbg backtrace --json
 edbg session stop
 ```
 
-发现逻辑会检查 VS Code launch/tasks、CMake/Make/PlatformIO、ELF 和常见本机 GDB Server 端口。若现有配置已明确，直接复用；只有发现结果不明确时才补充参数。`session start` 会启动或复用 OpenOCD，之后各 CLI 命令重新连接 GDB/MI；不是一个跨命令常驻 GDB 进程。
+发现逻辑会检查 VS Code launch/tasks、OpenOCD 命令参数、CMake/Make/PlatformIO、ELF 和常见本机 GDB Server 端口。若现有配置已明确，直接复用；只有发现结果不明确时才补充参数。无需创建 `.edbg.toml`，也不要求独立 `target.cfg`：IDE 启动配置、board/full config 或命令行参数都可提供目标配置。`connect` 会自动复用已运行的本机 GDB Server，并通过 GDB 验证连接和目标响应；持久 GDB/MI 会话供后续独立 CLI 命令复用。
 需要时可直接引用完整 OpenOCD 配置或已有 interface/target 脚本：
 
 ```sh

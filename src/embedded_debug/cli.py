@@ -13,18 +13,23 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
+from .build_info import build_info
 from .config import ProjectConfig, discover_config, load_config
 from .discovery import discover_project, openocd_launch_options
 from .doctor import doctor
-from .gdb.controller import GDBController
-from .gdb.mi_transport import GDBError, MITransport
+from .gdb.mi_transport import GDBError
 from .models import Envelope
 from .openocd.manager import OpenOCDError, OpenOCDManager
+from .session_manager import (
+    SessionManagerError,
+    session_operation,
+    session_status,
+    start_session,
+    stop_session,
+)
 from .session_store import (
-    process_alive,
+    daemon_identity_matches,
     read_session,
-    save_session,
-    stop_owned_session,
 )
 
 
@@ -37,6 +42,12 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--config", type=Path, help="project TOML configuration")
     p.add_argument("--gdb", help="GDB executable override")
     p.add_argument("--openocd", help="OpenOCD executable override")
+    p.add_argument(
+        "--gdb-timeout",
+        type=float,
+        default=None,
+        help="default timeout in seconds for GDB/MI commands",
+    )
     sub = p.add_subparsers(dest="command", required=True)
     command_parsers: dict[str, argparse.ArgumentParser] = {}
 
@@ -56,6 +67,7 @@ def parser() -> argparse.ArgumentParser:
         "--verbose", action="store_true", help="show complete tool executable names"
     )
     command_parser("config-validate", help="validate project TOML")
+    command_parser("build-info", help="show CLI version and immutable source fingerprint")
     command_parser("probe-list", help="list OpenOCD-accessible debug probes (best effort)")
     command_parser("discover", help="discover existing build, OpenOCD, GDB, and ELF project setup")
     connect = command_parser("connect", help="connect to an OpenOCD GDB server")
@@ -104,6 +116,7 @@ def parser() -> argparse.ArgumentParser:
     write.add_argument("--authorize", action="store_true")
     flash = command_parser("flash")
     flash.add_argument("--authorize", action="store_true")
+    flash.add_argument("--authorize-command", action="store_true")
     flash.add_argument("--elf", type=Path)
     for action_name in ("continue", "step", "next"):
         command_parsers[action_name].add_argument(
@@ -113,6 +126,11 @@ def parser() -> argparse.ArgumentParser:
         )
     build = command_parser("build")
     build.add_argument("--authorize-run", action="store_true")
+    build.add_argument(
+        "--authorize-command",
+        action="store_true",
+        help="allow execution of the current workspace's build command",
+    )
 
     def add_nested(
         group_name: str, actions: dict[str, tuple[str, tuple[tuple[str, dict[str, Any]], ...]]]
@@ -163,6 +181,7 @@ def parser() -> argparse.ArgumentParser:
         {
             "list": ("threads", ()),
             "inspect": ("thread-inspect", (("thread_id", {}),)),
+            "select": ("thread-select", (("thread_id", {}),)),
         },
     )
     add_nested("fault", {"analyze": ("fault-analyze", ())})
@@ -184,9 +203,15 @@ def parser() -> argparse.ArgumentParser:
     ):
         session_start.add_argument(flag, **options)
     session_start.set_defaults(canonical_command="session-start")
-    for action_name in ("status", "stop"):
+    for action_name in ("status", "stop", "recover"):
         leaf = session_actions.add_parser(action_name)
         leaf.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
+        if action_name == "recover":
+            leaf.add_argument(
+                "--authorize-openocd-restart",
+                action="store_true",
+                help="authorize restarting the configured OpenOCD service if it has exited",
+            )
         leaf.set_defaults(canonical_command=f"session-{action_name}")
     return p
 
@@ -255,13 +280,8 @@ def _connection_settings(
     discovery = discover_project()
     ide = openocd_launch_options(discovery)
     active_servers = discovery["active_gdb_servers"]
-    stored_session = read_session()
-    session_active = bool(
-        stored_session
-        and OpenOCDManager.port_open(
-            str(stored_session.get("host", "127.0.0.1")), int(stored_session.get("gdb_port", 3333))
-        )
-    )
+    stored_session = read_session() or {}
+    session_active = bool(stored_session and daemon_identity_matches(stored_session))
     if session_active and stored_session:
         ide.setdefault("host", stored_session.get("host", "127.0.0.1"))
         ide.setdefault("gdb_port", int(stored_session.get("gdb_port", 3333)))
@@ -278,29 +298,59 @@ def _connection_settings(
 
     host = (
         cli_value("host")
+        or (stored_session.get("host") if session_active else None)
         or (cfg.openocd.host if cfg.config_path else ide.get("host"))
         or "127.0.0.1"
     )
     port = (
-        explicit_port or (cfg.openocd.gdb_port if cfg.config_path else ide.get("gdb_port")) or 3333
+        explicit_port
+        or (stored_session.get("gdb_port") if session_active else None)
+        or (cfg.openocd.gdb_port if cfg.config_path else ide.get("gdb_port"))
+        or 3333
     )
     openocd_config = cli_value("openocd_config") or (
-        cfg.openocd.config if cfg.config_path and not session_active else ide.get("config")
+        stored_session.get("openocd_config")
+        if session_active
+        else cfg.openocd.config
+        if cfg.config_path
+        else ide.get("config")
     )
     interface = cli_value("interface") or (
-        cfg.openocd.interface if cfg.config_path and not session_active else ide.get("interface")
+        stored_session.get("interface")
+        if session_active
+        else cfg.openocd.interface
+        if cfg.config_path
+        else ide.get("interface")
     )
-    target = cli_value("target") or (cfg.openocd.target if cfg.config_path else ide.get("target"))
-    board = cli_value("board") or (cfg.openocd.board if cfg.config_path else ide.get("board"))
+    target = cli_value("target") or (
+        stored_session.get("target_config")
+        if session_active
+        else cfg.openocd.target
+        if cfg.config_path
+        else ide.get("target")
+    )
+    board = cli_value("board") or (
+        stored_session.get("board")
+        if session_active
+        else cfg.openocd.board
+        if cfg.config_path
+        else ide.get("board")
+    )
     config_files = (
         []
-        if (cfg.config_path and not session_active) or cli_value("openocd_config")
+        if cli_value("openocd_config")
+        else stored_session.get("config_files", [])
+        if session_active
+        else []
+        if cfg.config_path
         else ide.get("config_files", [])
     )
     commands = [
         *(
-            cfg.openocd.commands
-            if cfg.config_path and not session_active
+            stored_session.get("commands", [])
+            if session_active
+            else cfg.openocd.commands
+            if cfg.config_path
             else ide.get("commands", [])
         ),
         *(getattr(args, "openocd_command", []) if allow_connect_options else []),
@@ -313,6 +363,8 @@ def _connection_settings(
     )
     if elf_arg is not None:
         elf = elf_arg
+    elif session_active and stored_session and stored_session.get("elf"):
+        elf = Path(stored_session["elf"])
     elif cfg.elf:
         elf = Path(cfg.elf)
         if not elf.is_absolute() and cfg.config_path:
@@ -336,15 +388,22 @@ def _connection_settings(
         "board": board,
         "config_files": config_files,
         "server_args": []
-        if cfg.config_path or cli_value("openocd_config")
+        if cli_value("openocd_config")
+        else stored_session.get("server_args", [])
+        if session_active
+        else []
+        if cfg.config_path
         else ide.get("server_args", []),
         "commands": commands,
         "adapter_khz": (
-            cli_value("adapter_khz") or (cfg.openocd.adapter_khz if cfg.config_path else None)
+            cli_value("adapter_khz")
+            or (stored_session.get("adapter_khz") if session_active else None)
+            or (cfg.openocd.adapter_khz if cfg.config_path else None)
         ),
         "elf": elf,
         "openocd_executable": (
             cli_value("openocd")
+            or (stored_session.get("openocd_executable") if session_active else None)
             or (
                 cfg.tools.openocd
                 if cfg.config_path and not session_active
@@ -354,7 +413,7 @@ def _connection_settings(
         ),
         "gdb_executable": (
             cli_value("gdb")
-            or (stored_session.get("gdb_executable") if stored_session else None)
+            or (stored_session.get("gdb_executable") if session_active else None)
             or (
                 cfg.tools.gdb
                 if cfg.config_path and not session_active
@@ -362,6 +421,28 @@ def _connection_settings(
             )
             or cfg.tools.gdb
         ),
+        "gdb_timeout": getattr(args, "gdb_timeout", None)
+        or (stored_session.get("gdb_timeout") if session_active else None)
+        or 10.0,
+    }
+
+
+def _daemon_settings(settings: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "host": settings["host"],
+        "gdb_port": settings["gdb_port"],
+        "openocd_config": settings["openocd_config"],
+        "interface": settings["interface"],
+        "target_config": settings["target"],
+        "board": settings["board"],
+        "config_files": settings["config_files"],
+        "server_args": settings["server_args"],
+        "commands": settings["commands"],
+        "adapter_khz": settings["adapter_khz"],
+        "openocd_executable": settings["openocd_executable"],
+        "gdb_executable": settings["gdb_executable"],
+        "gdb_timeout": settings["gdb_timeout"],
+        "elf": str(settings["elf"]) if settings["elf"] else None,
     }
 
 
@@ -395,27 +476,8 @@ def run(argv: Sequence[str] | None = None) -> int:
             )
             _emit(env, args.json)
             return 0
-        if name == "session-status":
-            info = read_session()
-            if not info:
-                _emit(Envelope(name, True, data={"active": False}), args.json)
-            else:
-                alive = bool(
-                    info.get("pid") and process_alive(int(info["pid"]))
-                    if info.get("owned")
-                    else OpenOCDManager.port_open(
-                        str(info.get("host", "127.0.0.1")), int(info.get("gdb_port", 3333))
-                    )
-                )
-                info["active"] = alive and OpenOCDManager.port_open(
-                    str(info.get("host", "127.0.0.1")), int(info.get("gdb_port", 3333))
-                )
-                info["target_state"] = "unknown"
-                _emit(Envelope(name, True, target_state="unknown", data=info), args.json)
-            return 0
-        if name == "session-stop":
-            result = stop_owned_session()
-            _emit(Envelope(name, True, data=result), args.json)
+        if name == "build-info":
+            _emit(Envelope(name, True, data=build_info()), args.json)
             return 0
         if name == "discover":
             _emit(Envelope(name, True, data=discover_project()), args.json)
@@ -449,324 +511,94 @@ def run(argv: Sequence[str] | None = None) -> int:
                 args.json,
             )
             return 0
+        if name == "session-status":
+            data = session_status()
+            _emit(
+                Envelope(
+                    name,
+                    "error" not in data,
+                    target=data.get("target", {}),
+                    target_state=data.get("target_state", "unknown"),
+                    data=data,
+                    error=(
+                        {"code": "SESSION_UNAVAILABLE", "message": data["error"]}
+                        if "error" in data
+                        else None
+                    ),
+                ),
+                args.json,
+            )
+            return 0 if "error" not in data else 2
+        if name == "session-stop":
+            data = stop_session()
+            _emit(Envelope(name, True, data=data, target_state="disconnected"), args.json)
+            return 0
+        if name == "session-recover":
+            response = session_operation(
+                "recover",
+                authorize_openocd_restart=bool(args.authorize_openocd_restart),
+            )
+            if args.authorize_openocd_restart:
+                _audit("openocd-restart", "session recovery")
+            _emit(
+                Envelope(
+                    name,
+                    True,
+                    target=response.get("target", {}),
+                    target_state=response.get("target_state", "unknown"),
+                    data=response.get("data"),
+                ),
+                args.json,
+            )
+            return 0
         if name in {"connect", "session-start"}:
-            existing_session = read_session()
-            if (
-                name == "session-start"
-                and existing_session
-                and OpenOCDManager.port_open(
-                    str(existing_session.get("host", "127.0.0.1")),
-                    int(existing_session.get("gdb_port", 3333)),
-                )
-            ):
-                raise ValueError(
-                    "An EmbeddedDebug session is already active; run session status or stop first"
-                )
+            if args.gdb_timeout is not None and args.gdb_timeout <= 0:
+                raise ValueError("--gdb-timeout must be a positive number")
             settings = _connection_settings(args, cfg, allow_connect_options=True)
-            host = settings["host"]
-            gdb_port = settings["gdb_port"]
-            openocd_config = settings["openocd_config"]
-            interface, target_config, board = (
-                settings["interface"],
-                settings["target"],
-                settings["board"],
-            )
-            commands = settings["commands"]
-            adapter_khz = settings["adapter_khz"]
-            config_files = settings["config_files"]
-            server_args = settings["server_args"]
-            elf = settings["elf"]
-            if not OpenOCDManager.port_open(host, gdb_port) and not any(
-                [
-                    openocd_config,
-                    interface,
-                    target_config,
-                    board,
-                    config_files,
+            if settings["host"] not in {"127.0.0.1", "localhost", "::1"}:
+                raise ValueError("Only loopback OpenOCD connections are allowed by default")
+            if not OpenOCDManager.port_open(settings["host"], settings["gdb_port"]) and not any(
+                (
+                    settings["openocd_config"],
+                    settings["interface"],
+                    settings["target"],
+                    settings["board"],
+                    settings["config_files"],
                     settings["server_args"],
-                ]
+                    settings["commands"],
+                )
             ):
                 raise ValueError(
-                    "No running local GDB server or unambiguous OpenOCD project config was found. "
-                    "Run edbg discover --json and supply existing project settings; "
-                    "no target.cfg is generated."
+                    "No running local GDB server or existing project OpenOCD "
+                    "configuration was found. "
+                    "Run edbg discover --json and pass the project's existing settings."
                 )
-        elif name in {
-            "status",
-            "halt",
-            "continue",
-            "step",
-            "next",
-            "registers",
-            "backtrace",
-            "threads",
-            "thread-inspect",
-            "fault-analyze",
-            "snapshot",
-            "breakpoint-list",
-            "breakpoint-add",
-            "breakpoint-remove",
-            "variable-read",
-            "memory-read",
-            "memory-write",
-            "reset",
-        }:
-            settings = _connection_settings(args, cfg, allow_connect_options=False)
-            host, gdb_port = settings["host"], settings["gdb_port"]
-            openocd_config = settings["openocd_config"]
-            interface, target_config, board = (
-                settings["interface"],
-                settings["target"],
-                settings["board"],
-            )
-            commands, adapter_khz = settings["commands"], settings["adapter_khz"]
-            config_files, elf = settings["config_files"], settings["elf"]
-            server_args = settings["server_args"]
-        elif name == "flash":
-            settings = _connection_settings(args, cfg, allow_connect_options=False)
-            host, gdb_port = settings["host"], settings["gdb_port"]
-            openocd_config, interface = settings["openocd_config"], settings["interface"]
-            target_config, board = settings["target"], settings["board"]
-            commands, adapter_khz = settings["commands"], settings["adapter_khz"]
-            config_files, elf = settings["config_files"], settings["elf"]
-            server_args = settings["server_args"]
-        else:
-            host = None
-        if name == "flash":
-            if not args.authorize:
-                raise PermissionError("flash requires explicit --authorize")
-            project = discover_project()
-            flash_task = project.get("flash")
-            if flash_task and flash_task.get("argv"):
-                _audit("flash", str(flash_task.get("label") or flash_task["source"]))
-                flash_result = _run_external(
-                    flash_task["argv"], Path(project["project_root"]), args.json
-                )
-                succeeded = flash_result.returncode == 0
-                _emit(
-                    Envelope(
-                        name,
-                        succeeded,
-                        data={"source": flash_task["source"], "exit_code": flash_result.returncode},
-                        error=None
-                        if succeeded
-                        else {
-                            "code": "FLASH_FAILED",
-                            "message": "Existing project flash task failed",
-                        },
+            _audit("connect", f"{settings['host']}:{settings['gdb_port']}")
+            data = start_session(_daemon_settings(settings))
+            data.setdefault("architecture", data.get("target", {}).get("architecture"))
+            _emit(
+                Envelope(
+                    name,
+                    True,
+                    target=data.get("target", {}),
+                    target_state=data.get("target_state", "unknown"),
+                    data={**data, "session": "started" if name == "session-start" else "connected"},
+                    diagnostics=(
+                        ["Multiple ELF files were found; pass --elf to select symbols."]
+                        if not settings["elf"] and len(settings["existing_elfs"]) > 1
+                        else []
                     ),
-                    args.json,
-                )
-                return 0 if succeeded else 1
-        if name in {
-            "connect",
-            "session-start",
-            "status",
-            "halt",
-            "continue",
-            "step",
-            "next",
-            "registers",
-            "backtrace",
-            "threads",
-            "thread-inspect",
-            "fault-analyze",
-            "snapshot",
-            "breakpoint-list",
-            "breakpoint-add",
-            "breakpoint-remove",
-            "variable-read",
-            "memory-read",
-            "memory-write",
-            "flash",
-            "reset",
-        }:
-            if host not in {"127.0.0.1", "localhost", "::1"}:
-                raise ValueError("Only loopback OpenOCD connections are allowed by default")
-            if name in {"flash", "reset", "memory-write"} and not args.authorize:
-                raise PermissionError(f"{name} requires explicit --authorize")
-            if name in {"continue", "step", "next"} and not args.authorize_run:
-                raise PermissionError(f"{name} requires explicit --authorize-run")
-            if name == "memory-read" and not 1 <= args.length <= 4096:
-                raise ValueError("memory read length must be between 1 and 4096 bytes")
-            if name == "memory-write":
-                if (
-                    not 1 <= args.length <= 8
-                    or args.value < 0
-                    or args.value >= 1 << (8 * args.length)
-                ):
-                    raise ValueError(
-                        "memory write value does not fit the requested 1..8 byte length"
-                    )
-                _audit(name, f"0x{args.address:x}")
-            if name in {"flash", "reset"}:
-                _audit(name, str(elf or "configured target"))
-            if name in {"continue", "step", "next", "halt"}:
-                _audit(name, name)
-            if name in {"connect", "session-start"}:
-                _audit(name, f"{host}:{gdb_port}")
-            if name == "breakpoint-add":
-                _audit(name, args.location)
-            if name == "breakpoint-remove":
-                _audit(name, str(args.number))
-            owned_manager = not OpenOCDManager.port_open(host, gdb_port)
-            openocd_executable = (
-                settings["openocd_executable"] if name != "flash" else cfg.tools.openocd
+                ),
+                args.json,
             )
-            manager = (
-                OpenOCDManager(
-                    openocd_executable,
-                    host,
-                    gdb_port,
-                    Path(".edbg/openocd.log"),
-                )
-                if owned_manager
-                else None
-            )
-            gdb_executable = (
-                settings["gdb_executable"] if name != "flash" else (args.gdb or cfg.tools.gdb)
-            )
-            transport = MITransport(gdb_executable)
-            try:
-                if manager:
-                    manager.start(
-                        openocd_config,
-                        interface,
-                        target_config,
-                        board,
-                        commands,
-                        adapter_khz,
-                        config_files=config_files,
-                        extra_args=server_args,
-                    )
-                controller = GDBController(transport)
-                data: Any = controller.connect(host, gdb_port, str(elf) if elf else None)
-                if name == "connect":
-                    pass
-                elif name == "status":
-                    data = {
-                        "connection": "connected",
-                        "architecture": controller.architecture,
-                        "capabilities": data["capabilities"],
-                    }
-                elif name == "registers":
-                    data = controller.registers_read()
-                elif name == "variable-read":
-                    data = {
-                        "expression": args.expression,
-                        "value": controller.variable_read(args.expression),
-                    }
-                elif name == "backtrace":
-                    data = controller.backtrace()
-                elif name == "breakpoint-add":
-                    data = controller.breakpoint_add(args.location)
-                elif name == "breakpoint-list":
-                    data = controller.breakpoint_list()
-                elif name == "breakpoint-remove":
-                    data = transport.command(f"-break-delete {args.number}").results
-                elif name == "memory-read":
-                    data = transport.command(
-                        f"-data-read-memory-bytes 0x{args.address:x} {args.length}"
-                    ).results
-                elif name == "memory-write":
-                    payload = args.value.to_bytes(args.length, "little").hex()
-                    data = transport.command(
-                        f'-data-write-memory-bytes 0x{args.address:x} "{payload}"'
-                    ).results
-                elif name == "halt":
-                    controller.halt()
-                    data = {"state": transport.state}
-                elif name == "continue":
-                    controller.resume()
-                    data = {"state": transport.state}
-                elif name == "step":
-                    transport.command("-exec-step")
-                    data = {"state": transport.state}
-                elif name == "next":
-                    transport.command("-exec-next")
-                    data = {"state": transport.state}
-                elif name == "threads":
-                    data = {
-                        "gdb_threads": transport.command("-thread-info").results,
-                        "rtos_awareness": controller.capabilities.rtos_awareness,
-                    }
-                elif name == "thread-inspect":
-                    thread_info = transport.command("-thread-info").results or {}
-                    threads = thread_info.get("threads", [])
-                    requested = str(args.thread_id)
-                    item = next(
-                        (thread for thread in threads if str(thread.get("id")) == requested),
-                        None,
-                    )
-                    if item is None:
-                        raise ValueError(f"GDB thread {requested} was not reported")
-                    data = {
-                        "thread": item,
-                        "rtos_awareness": controller.capabilities.rtos_awareness,
-                    }
-                elif name == "snapshot":
-                    data = {
-                        "registers": controller.registers_read(),
-                        "backtrace": controller.backtrace(),
-                        "architecture": controller.architecture,
-                    }
-                elif name == "fault-analyze":
-                    raise RuntimeError(
-                        "No architecture-specific fault diagnostic plugin is available"
-                    )
-                elif name == "reset":
-                    data = transport.command(
-                        '-interpreter-exec console "monitor reset halt"'
-                    ).results
-                elif name == "flash":
-                    if not elf or not elf.is_file():
-                        raise ValueError(
-                            "flash requires an existing ELF via --elf or [project].elf"
-                        )
-                    data = transport.command(
-                        '-interpreter-exec console "load"', timeout=120
-                    ).results
-                target_info = {"architecture": controller.architecture, "connection": "connected"}
-                diagnostics = []
-                if name == "connect" and not elf and len(settings["existing_elfs"]) > 1:
-                    diagnostics.append(
-                        "Multiple ELF files were found; no symbol file was selected. "
-                        "Pass --elf to enable source/variable lookup."
-                    )
-                keep_openocd = name == "session-start" or bool(getattr(args, "keep_server", False))
-                if keep_openocd:
-                    save_session(
-                        {
-                            "pid": manager.process.pid if manager and manager.process else None,
-                            "owned": bool(manager and manager.process),
-                            "host": host,
-                            "gdb_port": gdb_port,
-                            "gdb_executable": gdb_executable,
-                            "elf": str(elf) if elf else None,
-                            "openocd_executable": openocd_executable,
-                            "started_from": str(cfg.config_path)
-                            if cfg.config_path
-                            else "project discovery",
-                        }
-                    )
-                    data["session"] = "started" if name == "session-start" else "kept"
-                _emit(
-                    Envelope(
-                        name,
-                        True,
-                        target=target_info,
-                        target_state=transport.state,
-                        data=data,
-                        diagnostics=diagnostics,
-                    ),
-                    args.json,
-                )
-                return 0
-            finally:
-                transport.close()
-                if manager and not (name == "session-start" or getattr(args, "keep_server", False)):
-                    manager.stop()
+            return 0
+
         if name == "build":
+            if not (args.authorize_command or args.authorize_run):
+                raise PermissionError(
+                    "Build executes a workspace command; pass --authorize-command "
+                    "after reviewing it"
+                )
             root = cfg.config_path.parent if cfg.config_path else Path.cwd()
             if cfg.build_command:
                 build_command = cfg.build_command
@@ -780,6 +612,7 @@ def run(argv: Sequence[str] | None = None) -> int:
                     )
                 build_command = candidate["argv"]
                 build_cwd = root
+            _audit("build-command", " ".join(build_command))
             build_result = _run_external(build_command, build_cwd, args.json)
             ok = build_result.returncode == 0
             _emit(
@@ -794,23 +627,171 @@ def run(argv: Sequence[str] | None = None) -> int:
                 args.json,
             )
             return 0 if ok else 1
-        if name in {"threads", "fault-analyze", "snapshot"}:
+
+        persistent_operations = {
+            "status",
+            "halt",
+            "continue",
+            "step",
+            "next",
+            "reset",
+            "registers",
+            "backtrace",
+            "threads",
+            "thread-inspect",
+            "thread-select",
+            "fault-analyze",
+            "snapshot",
+            "breakpoint-list",
+            "breakpoint-add",
+            "breakpoint-remove",
+            "variable-read",
+            "memory-read",
+            "memory-write",
+            "flash",
+        }
+        if name in persistent_operations:
+            if args.gdb_timeout is not None and args.gdb_timeout <= 0:
+                raise ValueError("--gdb-timeout must be a positive number")
+            if name in {"continue", "step", "next"} and not args.authorize_run:
+                raise PermissionError(f"{name} requires explicit --authorize-run")
+            if name in {"reset", "memory-write", "flash"} and not args.authorize:
+                raise PermissionError(f"{name} requires explicit --authorize")
+            settings = _connection_settings(args, cfg, allow_connect_options=False)
+            if settings["host"] not in {"127.0.0.1", "localhost", "::1"}:
+                raise ValueError("Only loopback OpenOCD connections are allowed by default")
+            if name == "flash":
+                project_root = cfg.config_path.parent if cfg.config_path else Path.cwd()
+                project = discover_project(project_root)
+                flash_task = project.get("flash")
+                if flash_task and flash_task.get("argv"):
+                    if not args.authorize_command:
+                        raise PermissionError(
+                            "Flash task executes a workspace command; review it and pass "
+                            "--authorize-command"
+                        )
+                    had_session = bool(session_status().get("active"))
+                    if had_session:
+                        stop_session()
+                    task_argv = flash_task["argv"]
+                    task_cwd = Path(project["project_root"])
+                    _audit("flash-command", " ".join(task_argv))
+                    flash_result = _run_external(task_argv, task_cwd, args.json)
+                    reconnect = None
+                    if had_session and flash_result.returncode == 0:
+                        try:
+                            reconnect = start_session(_daemon_settings(settings))
+                        except (SessionManagerError, OpenOCDError, GDBError) as exc:
+                            reconnect = {"error": str(exc)}
+                    succeeded = flash_result.returncode == 0
+                    _emit(
+                        Envelope(
+                            name,
+                            succeeded,
+                            target=(reconnect or {}).get("target", {}),
+                            target_state=(reconnect or {}).get("target_state", "unknown"),
+                            data={
+                                "source": flash_task["source"],
+                                "exit_code": flash_result.returncode,
+                                "session_reconnected": bool(reconnect and "error" not in reconnect)
+                                if had_session
+                                else None,
+                            },
+                            diagnostics=(
+                                [reconnect["error"]] if reconnect and "error" in reconnect else []
+                            ),
+                            error=None
+                            if succeeded
+                            else {"code": "FLASH_FAILED", "message": "Workspace flash task failed"},
+                        ),
+                        args.json,
+                    )
+                    return 0 if succeeded else 1
+            if (
+                not read_session()
+                and not OpenOCDManager.port_open(settings["host"], settings["gdb_port"])
+                and not any(
+                    (
+                        settings["openocd_config"],
+                        settings["interface"],
+                        settings["target"],
+                        settings["board"],
+                        settings["config_files"],
+                        settings["server_args"],
+                        settings["commands"],
+                    )
+                )
+            ):
+                raise ValueError(
+                    "No live debug session or existing project OpenOCD configuration was found; "
+                    "run edbg discover --json and supply existing settings."
+                )
+            start_session(_daemon_settings(settings))
+            params: dict[str, Any] = {}
+            if name == "variable-read":
+                params["expression"] = args.expression
+            elif name in {"memory-read", "memory-write"}:
+                params.update({"address": args.address, "length": args.length})
+                if name == "memory-write":
+                    params["value"] = args.value
+                    params["authorized"] = True
+            elif name == "breakpoint-add":
+                params["location"] = args.location
+            elif name == "breakpoint-remove":
+                params["number"] = args.number
+            elif name == "thread-inspect":
+                params["thread_id"] = args.thread_id
+            elif name == "thread-select":
+                params["thread_id"] = args.thread_id
+            elif name == "flash":
+                params["authorized"] = True
+            elif name == "reset":
+                params["authorized"] = True
+            if name in {"continue", "step", "next"}:
+                params["authorized_run"] = True
+            if name == "memory-read" and not 1 <= args.length <= 4096:
+                raise ValueError("memory read length must be between 1 and 4096 bytes")
+            if name == "memory-write":
+                if (
+                    not 1 <= args.length <= 8
+                    or args.value < 0
+                    or args.value >= 1 << (8 * args.length)
+                ):
+                    raise ValueError("memory write value must fit a 1..8 byte length")
+            if name in {"continue", "step", "next", "halt", "reset", "flash"}:
+                _audit(name, str(settings["elf"] or f"{settings['host']}:{settings['gdb_port']}"))
+            elif name == "memory-write":
+                _audit(name, f"0x{args.address:x}")
+            elif name == "breakpoint-add":
+                _audit(name, args.location)
+            elif name == "breakpoint-remove":
+                _audit(name, str(args.number))
+            response = session_operation(name, **params)
+            response_data = response.get("data")
+            target_info = response.get("target", {})
+            target_state = response.get("target_state", "unknown")
+            if isinstance(response_data, dict):
+                target_info = response_data.get("target", target_info)
+                target_state = response_data.get("target_state", target_state)
             _emit(
                 Envelope(
                     name,
-                    False,
-                    error={
-                        "code": "SESSION_REQUIRED",
-                        "message": (
-                            "This operation requires a live GDB session; persistent session "
-                            "management is not implemented yet."
-                        ),
-                    },
+                    True,
+                    target=target_info,
+                    target_state=target_state,
+                    data=response_data,
+                    diagnostics=(
+                        [f"Capabilities: {response_data['capabilities']}"]
+                        if name == "status"
+                        and isinstance(response_data, dict)
+                        and "capabilities" in response_data
+                        else []
+                    ),
                 ),
                 args.json,
             )
-            return 2
-        raise RuntimeError(f"{name} requires an active GDB session; use `edbg connect` first")
+            return 0
+        raise RuntimeError(f"Unsupported command: {name}")
     except (ValueError, OSError, GDBError, OpenOCDError, PermissionError, RuntimeError) as exc:
         code = "AUTHORIZATION_REQUIRED" if isinstance(exc, PermissionError) else "OPERATION_FAILED"
         _emit(Envelope(name, False, error={"code": code, "message": str(exc)}), args.json)
@@ -819,3 +800,7 @@ def run(argv: Sequence[str] | None = None) -> int:
 
 def main() -> None:
     raise SystemExit(run())
+
+
+if __name__ == "__main__":
+    main()

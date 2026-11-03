@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.metadata
+import json
 import os
 import shutil
 import subprocess
@@ -13,7 +14,25 @@ from collections.abc import Sequence
 from pathlib import Path
 
 PINNED_VERSION = "0.1.0"
-SOURCE = "git+https://github.com/tangsangsimida/embedded-debug-skill.git@c0cd70d"
+SOURCE = "git+https://github.com/tangsangsimida/embedded-debug-skill.git@1d931b2199f47daef311cb4008706d4a958e7a6e"
+PINNED_SOURCE_DIGEST = "13edf806971a3d7c1bbbdab8abcb1ee0b294a12818a4596dc501aa0d5f7caa4c"
+
+
+def _matches_build_info(command: Sequence[str]) -> bool:
+    try:
+        result = subprocess.run(
+            [*command, "--json", "build-info"],
+            capture_output=True,
+            text=True,
+            timeout=8,
+            check=False,
+        )
+        data = json.loads(result.stdout)["data"] if result.returncode == 0 else {}
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError, KeyError, TypeError):
+        return False
+    return (
+        data.get("version") == PINNED_VERSION and data.get("source_digest") == PINNED_SOURCE_DIGEST
+    )
 
 
 def _cached_cli() -> Path:
@@ -30,6 +49,9 @@ def _run_cached(cli: Path, args: Sequence[str]) -> int:
         return 2
     if result.returncode != 0 or result.stdout.strip() != PINNED_VERSION:
         print("Cached EmbeddedDebug CLI failed its pinned version check.", file=sys.stderr)
+        return 2
+    if not _matches_build_info([str(cli)]):
+        print("Cached CLI source does not match this Skill candidate.", file=sys.stderr)
         return 2
     return subprocess.run([str(cli), *args]).returncode
 
@@ -56,6 +78,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 2
+        if not _matches_build_info([existing_cli]):
+            print("Existing edbg source does not match this Skill candidate.", file=sys.stderr)
+            return 2
         return subprocess.run([existing_cli, *remainder]).returncode
 
     try:
@@ -64,7 +89,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         installed = None
 
     if installed == PINNED_VERSION:
-        return subprocess.run([sys.executable, "-m", "embedded_debug.cli", *remainder]).returncode
+        module = [sys.executable, "-m", "embedded_debug.cli"]
+        if not _matches_build_info(module):
+            print("Installed CLI source does not match this Skill candidate.", file=sys.stderr)
+            return 2
+        return subprocess.run([*module, *remainder]).returncode
     if installed is not None:
         print(
             f"EmbeddedDebug CLI version {installed} does not match Skill {PINNED_VERSION}; "
@@ -85,14 +114,30 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
 
     if shutil.which("uvx"):
-        command = ["uvx", "--from", SOURCE, "edbg", *remainder]
+        command = ["uvx", "--from", SOURCE, "edbg"]
+        if not _matches_build_info(command):
+            print(
+                "Pinned uvx package does not match this Skill source fingerprint.", file=sys.stderr
+            )
+            return 2
+        command.extend(remainder)
         result = subprocess.run(command, capture_output=True, text=True, check=False)
         if result.stderr:
             print(result.stderr, end="", file=sys.stderr)
         if result.stdout:
             print(result.stdout, end="")
         return result.returncode
-    python = shutil.which("python3") or sys.executable
+    # The interpreter running this launcher is the environment the user chose.
+    # Prefer it over another python3 earlier in PATH (which may lack venv).
+    python = sys.executable
+    interpreter_version = (sys.version_info.major, sys.version_info.minor)
+    if interpreter_version < (3, 11):
+        print(
+            "Python 3.11+ is required to install the CLI; current interpreter is "
+            f"{sys.version.split()[0]}. Rerun with a supported Python interpreter.",
+            file=sys.stderr,
+        )
+        return 2
     cached_cli.parent.mkdir(parents=True, exist_ok=True)
     create = subprocess.run(
         [python, "-m", "venv", str(cached_cli.parent.parent)],
@@ -126,6 +171,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             file=sys.stderr,
         )
         return install.returncode
+    if not _matches_build_info([str(cached_cli)]):
+        print("Installed CLI source does not match this Skill candidate.", file=sys.stderr)
+        return 2
     return _run_cached(cached_cli, remainder)
 
 
