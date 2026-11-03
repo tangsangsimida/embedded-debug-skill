@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import os
 import sys
+from types import SimpleNamespace
 
 import pytest
 
 from embedded_debug import session_manager
-from embedded_debug.session_store import save_session, session_path
+from embedded_debug.platforms.base import ProcessIdentity
+from embedded_debug.session_store import daemon_identity_diagnostic, save_session, session_path
 
 
 def _unverifiable_record() -> dict[str, object]:
@@ -53,3 +55,29 @@ def test_start_refuses_to_compete_with_an_unverifiable_session(
     with pytest.raises(session_manager.SessionManagerError, match="cannot be verified"):
         session_manager.start_session({})
     assert session_path().is_file()
+
+
+def test_daemon_identity_diagnostic_names_executable_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    identity = ProcessIdentity(
+        pid=123,
+        created="10.0",
+        executable="/python/actual",
+        username="runner",
+        command_line=("python", "-m", "embedded_debug.session_daemon", "--session-id", "abc"),
+    )
+    platform = SimpleNamespace(
+        process_identity=lambda _pid: identity,
+        identity_matches=lambda *_args, **_kwargs: False,
+    )
+    monkeypatch.setattr("embedded_debug.session_store.get_platform", lambda: platform)
+    info = {
+        "daemon_pid": 123,
+        "process_start_time": "10.0",
+        "python_executable": "/python/expected",
+        "session_id": "abc",
+    }
+    assert daemon_identity_diagnostic(info) == (
+        "process executable or user does not match the session record"
+    )

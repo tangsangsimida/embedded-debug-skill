@@ -15,6 +15,7 @@ from .platforms import get_platform
 from .session_ipc import SessionUnavailable, request_session
 from .session_store import (
     current_session_name,
+    daemon_identity_diagnostic,
     daemon_identity_is_stale,
     daemon_identity_matches,
     daemon_identity_status,
@@ -116,11 +117,14 @@ def start_session(settings: dict[str, Any], timeout: float = 20.0) -> dict[str, 
         finally:
             log_handle.close()
         deadline = time.monotonic() + timeout
+        identity_diagnostic = "session record not written yet"
         while time.monotonic() < deadline:
             info = read_session()
             identity_status = "missing"
             if info and info.get("session_id") == session_id:
                 identity_status = daemon_identity_status(info)
+                if identity_status != "match":
+                    identity_diagnostic = daemon_identity_diagnostic(info)
                 if identity_status == "match":
                     try:
                         status = request_session("status")
@@ -147,7 +151,7 @@ def start_session(settings: dict[str, Any], timeout: float = 20.0) -> dict[str, 
         suffix = f" Diagnostics: {details.strip()}" if details.strip() else ""
         raise SessionManagerError(
             f"Debug session manager did not become ready within {timeout}s "
-            f"(session record identity: {identity_status}).{suffix}"
+            f"(session record identity: {identity_status}; {identity_diagnostic}).{suffix}"
         )
 
 

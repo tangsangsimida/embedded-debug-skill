@@ -100,6 +100,37 @@ def daemon_identity_status(info: dict[str, Any]) -> str:
     return "match"
 
 
+def daemon_identity_diagnostic(info: dict[str, Any]) -> str:
+    """Explain why an existing daemon record is not trusted during startup."""
+    try:
+        pid = int(info["daemon_pid"])
+    except (KeyError, TypeError, ValueError):
+        return "daemon PID is missing or invalid"
+    identity = get_platform().process_identity(pid)
+    if identity is None:
+        return "operating system did not provide process identity"
+    expected_created = info.get("process_start_time")
+    if identity.created != str(expected_created):
+        return "process creation time does not match the session record"
+    expected_executable = info.get("python_executable")
+    if not isinstance(expected_executable, str) or not expected_executable:
+        return "Python executable is missing from the session record"
+    if not get_platform().identity_matches(
+        identity,
+        pid=pid,
+        created=expected_created,
+        executable=expected_executable,
+        username=info.get("daemon_username"),
+    ):
+        return "process executable or user does not match the session record"
+    argv = identity.command_line
+    if "embedded_debug.session_daemon" not in argv:
+        return "process command line does not identify the EmbeddedDebug daemon"
+    if str(info.get("session_id")) not in argv:
+        return "process command line has a different session ID"
+    return "identity verified"
+
+
 def daemon_identity_matches(info: dict[str, Any]) -> bool:
     return daemon_identity_status(info) == "match"
 
