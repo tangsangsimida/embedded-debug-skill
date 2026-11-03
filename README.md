@@ -46,7 +46,7 @@ The support boundary is OpenOCD plus the configured GDB architecture and observe
 
 ## Install the Python CLI
 
-After a stable release is available and the user authorizes it, the Skill wrapper can install the CLI from that exact Git tag:
+After user authorization, the Skill wrapper installs the CLI from the immutable source commit pinned in the installed Skill. The current candidate is not a stable Release:
 
 ```sh
 python3 <installed-skill-directory>/scripts/run_edbg.py --install-python-cli doctor --json
