@@ -9,7 +9,7 @@ npx skills add tangsangsimida/embedded-debug-skill --skill embedded-debug -a cod
 npx skills add tangsangsimida/embedded-debug-skill --skill embedded-debug -a claude-code -g -y
 ```
 
-Requirements: Python 3.11+ for the CLI. Hardware operations additionally require user-installed OpenOCD, a GDB matching the target architecture, and an adapter/target configuration already used by the project. Skill installation does not install or modify system toolchains. The version-checking launcher can install the matching immutable GitHub tag after user authorization; until v0.1.0 passes the release gate, that tag is not available. `edbg doctor` works even if the embedded toolchain is missing. Linux is the validated host; other operating systems are not yet verified.
+Requirements: Python 3.11+ for the CLI. Hardware operations additionally require user-installed OpenOCD, a GDB matching the target architecture, and an adapter/target configuration already used by the project. Skill installation does not install or modify system toolchains. The version-checking launcher can install the matching immutable GitHub commit after user authorization; the current candidate is pinned to the published source commit and is not a stable release. `edbg doctor` works even if the embedded toolchain is missing. Linux is the validated host; other operating systems are not yet verified.
 
 Ask your agent: “Use EmbeddedDebug Skill to inspect my OpenOCD environment and connect using the current project's configuration. Read CPU registers and the current backtrace.” The agent should check first, use your OpenOCD files and matching GDB, then report exact errors or observed output. Flashing, reset, and writes require explicit authorization.
 
@@ -52,7 +52,7 @@ After a stable release is available and the user authorizes it, the Skill wrappe
 python3 <installed-skill-directory>/scripts/run_edbg.py --install-python-cli doctor --json
 ```
 
-Or install it into your chosen Python environment from `https://github.com/tangsangsimida/embedded-debug-skill.git@v0.1.0`. Then run `edbg --help`, `edbg --version`, and `edbg doctor --json`. The Skills CLI installs Skill files; it does not install `edbg`, GDB, OpenOCD, or USB drivers. System tools remain user-managed.
+Or install it into your chosen Python environment from the immutable source commit pinned in the installed Skill launcher. Then run `edbg --help`, `edbg --version`, and `edbg doctor --json`. The Skills CLI installs Skill files; it does not install `edbg`, GDB, OpenOCD, or USB drivers. System tools remain user-managed.
 
 ## Quick start
 

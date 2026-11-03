@@ -11,7 +11,7 @@ import sys
 from collections.abc import Sequence
 
 PINNED_VERSION = "0.1.0"
-SOURCE = "git+https://github.com/tangsangsimida/embedded-debug-skill.git@v0.1.0"
+SOURCE = "git+https://github.com/tangsangsimida/embedded-debug-skill.git@c0cd70d"
 
 
 def main(argv: Sequence[str] | None = None) -> int:

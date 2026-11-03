@@ -7,7 +7,7 @@ npx skills add tangsangsimida/embedded-debug-skill --skill embedded-debug -a cod
 npx skills add tangsangsimida/embedded-debug-skill --skill embedded-debug -a claude-code -g -y
 ```
 
-CLI 需要 Python 3.11+。硬件调试还需要用户自行安装的 OpenOCD、匹配目标架构的 GDB、调试器及现有工程中的调试配置。安装 Skill 不会安装或修改系统工具链。CLI 与 Skill 版本匹配后，可在用户授权下由内置启动器从固定 Git Tag 安装；v0.1.0 目前尚未通过 Release Gate，因此还没有稳定 Tag。Linux 是已验证主机，其他系统尚未验证。即使缺少 OpenOCD/GDB，也可运行 `edbg --help`、`edbg --version` 和 `edbg doctor`。
+CLI 需要 Python 3.11+。硬件调试还需要用户自行安装的 OpenOCD、匹配目标架构的 GDB、调试器及现有工程中的调试配置。安装 Skill 不会安装或修改系统工具链。CLI 与 Skill 版本匹配后，可在用户授权下由内置启动器从 Skill 启动器固定的不可变 Git 提交安装；当前仓库提交不是稳定 Release。Linux 是已验证主机，其他系统尚未验证。即使缺少 OpenOCD/GDB，也可运行 `edbg --help`、`edbg --version` 和 `edbg doctor`。
 
 ## 能力范围
 
@@ -18,7 +18,7 @@ CLI 需要 Python 3.11+。硬件调试还需要用户自行安装的 OpenOCD、�
 ## 安装 CLI 与快速检查
 
 ```sh
-python3 -m pip install git+https://github.com/tangsangsimida/embedded-debug-skill.git@v0.1.0
+python3 <installed-skill-directory>/scripts/run_edbg.py --install-python-cli doctor --json
 edbg --help
 edbg doctor --json
 ```
