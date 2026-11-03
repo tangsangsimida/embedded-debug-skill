@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -60,6 +61,42 @@ def test_process_tree_cleanup_only_uses_the_supplied_owned_pid() -> None:
         if child.poll() is None:
             child.kill()
             child.wait()
+
+
+def test_process_tree_cleanup_refuses_a_mismatched_process_identity() -> None:
+    platform = get_platform()
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        identity = platform.process_identity(child.pid)
+        assert identity is not None
+        assert not platform.terminate_process_tree(
+            child.pid,
+            timeout=0.2,
+            expected_identity=replace(identity, created="different-process-start"),
+        )
+        assert child.poll() is None
+    finally:
+        if child.poll() is None:
+            assert platform.terminate_process_tree(
+                child.pid, timeout=0.5, expected_identity=platform.process_identity(child.pid)
+            )
+            child.wait(timeout=2)
+
+
+def test_python_script_arguments_preserve_unicode_and_spaces(tmp_path: Path) -> None:
+    script = tmp_path / "目录 with spaces" / "fake tool.py"
+    script.parent.mkdir()
+    output = tmp_path / "output file.txt"
+    script.write_text(
+        "from pathlib import Path\n"
+        "import sys\n"
+        "Path(sys.argv[1]).write_text(sys.argv[2], encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    argv = get_platform().executable_argv(str(script), str(output), "路径 with spaces")
+    result = subprocess.run(argv, check=False, capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    assert output.read_text(encoding="utf-8") == "路径 with spaces"
 
 
 def test_ipc_server_binds_loopback_and_rejects_remote_endpoint() -> None:
