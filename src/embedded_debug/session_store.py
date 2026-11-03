@@ -88,9 +88,7 @@ def _process_identity(
 
 
 def daemon_identity_status(info: dict[str, Any]) -> str:
-    status = _process_identity(
-        info, "daemon_pid", "process_start_time", "python_executable"
-    )
+    status = _process_identity(info, "daemon_pid", "process_start_time", "python_executable")
     if status != "match":
         return status
     identity = get_platform().process_identity(int(info["daemon_pid"]))
@@ -111,9 +109,10 @@ def daemon_identity_is_stale(info: dict[str, Any]) -> bool:
 
 
 def openocd_identity_matches(info: dict[str, Any]) -> bool:
-    return _process_identity(
-        info, "openocd_pid", "openocd_start_time", "openocd_process_executable"
-    ) == "match"
+    return (
+        _process_identity(info, "openocd_pid", "openocd_start_time", "openocd_process_executable")
+        == "match"
+    )
 
 
 def gdb_identity_matches(info: dict[str, Any]) -> bool:

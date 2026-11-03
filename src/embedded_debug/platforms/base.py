@@ -150,9 +150,7 @@ class BasePlatform:
         current = getpass.getuser()
         normalized = username.casefold()
         current_normalized = current.casefold()
-        return normalized == current_normalized or normalized.endswith(
-            "\\" + current_normalized
-        )
+        return normalized == current_normalized or normalized.endswith("\\" + current_normalized)
 
     def terminate_process_tree(
         self,

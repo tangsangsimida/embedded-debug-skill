@@ -62,8 +62,13 @@ def _venv_python(cli_path: Path) -> Path:
 def _run_cached(cli: Path, args: Sequence[str]) -> int:
     try:
         result = subprocess.run(
-            [str(cli), "--version"], capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=5, check=False
+            [str(cli), "--version"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+            check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
         return 2
@@ -85,8 +90,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     if existing_cli:
         try:
             version_result = subprocess.run(
-                [existing_cli, "--version"], capture_output=True, text=True,
-                encoding="utf-8", errors="replace", timeout=5, check=False
+                [existing_cli, "--version"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=5,
+                check=False,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             print(f"Existing edbg command could not be checked: {exc}", file=sys.stderr)

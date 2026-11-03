@@ -99,7 +99,7 @@ def test_discovers_openocd_command_arguments_and_gdb_path(tmp_path: Path, monkey
 
 def test_discovers_literal_openocd_command_from_makefile(tmp_path: Path, monkeypatch) -> None:
     (tmp_path / "Makefile").write_text(
-        'debug-server:\n\t@openocd -f interface/cmsis-dap.cfg '
+        "debug-server:\n\t@openocd -f interface/cmsis-dap.cfg "
         '-f board/custom.cfg -c "gdb_port 4555"\n',
         encoding="utf-8",
     )

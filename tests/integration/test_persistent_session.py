@@ -486,9 +486,7 @@ def test_active_gdb_command_can_be_cancelled_from_another_cli_process(
         code, denied = _invoke(tmp_path, env, "session", "cancel")
         assert code == 2
         assert "authorize-run" in denied["error"]["message"]
-        code, cancelled = _invoke(
-            tmp_path, env, "session", "cancel", "--authorize-run"
-        )
+        code, cancelled = _invoke(tmp_path, env, "session", "cancel", "--authorize-run")
         assert code == 0, cancelled
         stdout, _stderr = command.communicate(timeout=5)
         operation = json.loads(stdout)

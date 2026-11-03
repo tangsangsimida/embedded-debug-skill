@@ -6,10 +6,7 @@ from pathlib import Path
 
 
 def load_launcher():
-    path = (
-        Path(__file__).parents[2]
-        / "skills/embedded-debug/scripts/run_edbg.py"
-    )
+    path = Path(__file__).parents[2] / "skills/embedded-debug/scripts/run_edbg.py"
     spec = importlib.util.spec_from_file_location("embedded_debug_skill_launcher", path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)

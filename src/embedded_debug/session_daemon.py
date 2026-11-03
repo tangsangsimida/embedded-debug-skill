@@ -233,9 +233,10 @@ class DebugSessionDaemon:
     def _recover(self, *, authorize_openocd_restart: bool) -> dict[str, Any]:
         self.transport.close()
         if self.manager.process is None or self.manager.process.poll() is not None:
-            if not OpenOCDManager.port_open(
-                self.settings["host"], int(self.settings["gdb_port"])
-            ) and not authorize_openocd_restart:
+            if (
+                not OpenOCDManager.port_open(self.settings["host"], int(self.settings["gdb_port"]))
+                and not authorize_openocd_restart
+            ):
                 raise PermissionError(
                     "OpenOCD is unavailable; pass --authorize-openocd-restart before "
                     "starting the configured server"

@@ -230,8 +230,7 @@ def _openocd_listening_ports() -> set[int]:
 def _flash_candidate(root: Path, tasks: list[dict[str, Any]]) -> dict[str, Any] | None:
     for task in tasks:
         if any(
-            word in str(task.get("label", "")).lower()
-            for word in ("flash", "program", "upload")
+            word in str(task.get("label", "")).lower() for word in ("flash", "program", "upload")
         ):
             return task
     makefiles = [root / "Makefile", root / "makefile", *sorted(root.glob("*.mk"))]
@@ -267,8 +266,11 @@ def _flash_candidate(root: Path, tasks: list[dict[str, Any]]) -> dict[str, Any] 
         )
     if cmake_targets:
         build_dir = next(
-            (name for name in ("build", "cmake-build-debug", "cmake-build-release")
-             if (root / name).is_dir()),
+            (
+                name
+                for name in ("build", "cmake-build-debug", "cmake-build-release")
+                if (root / name).is_dir()
+            ),
             None,
         )
         if build_dir:
