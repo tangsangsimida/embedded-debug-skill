@@ -50,7 +50,7 @@ jobs:
           PY
       - name: Bootstrap CLI from the Skill's immutable source pin
         env:
-          HOME: ${{ runner.temp }}/isolated-cli-home
+          HOME: ${{ runner.temp }}/agent-home
           SKILL_AGENT: ${{ matrix.agent }}
         run: |
           python -m venv "$RUNNER_TEMP/cli-runtime"
