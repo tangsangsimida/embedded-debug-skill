@@ -152,7 +152,7 @@ def _script_openocd_commands(root: Path) -> list[dict[str, Any]]:
         if normalized_alias:
             continue
         try:
-            if any(path.samefile(previous) for previous in unique_paths):
+            if any(os.path.samefile(path, previous) for previous in unique_paths):
                 continue
         except OSError:
             pass

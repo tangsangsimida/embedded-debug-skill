@@ -17,6 +17,7 @@ from .session_store import (
     current_session_name,
     daemon_identity_is_stale,
     daemon_identity_matches,
+    daemon_identity_status,
     read_session,
     session_dir,
     session_names,
@@ -117,13 +118,16 @@ def start_session(settings: dict[str, Any], timeout: float = 20.0) -> dict[str, 
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             info = read_session()
+            identity_status = "missing"
             if info and info.get("session_id") == session_id:
-                try:
-                    status = request_session("status")
-                except SessionUnavailable:
-                    status = None
-                if status and status.get("success"):
-                    return {**status["data"], "reused_session": False}
+                identity_status = daemon_identity_status(info)
+                if identity_status == "match":
+                    try:
+                        status = request_session("status")
+                    except SessionUnavailable:
+                        status = None
+                    if status and status.get("success"):
+                        return {**status["data"], "reused_session": False}
             return_code = process.poll()
             if return_code is not None:
                 details = log_path.read_text(encoding="utf-8", errors="replace")[-4000:]
@@ -142,7 +146,8 @@ def start_session(settings: dict[str, Any], timeout: float = 20.0) -> dict[str, 
         details = log_path.read_text(encoding="utf-8", errors="replace")[-4000:]
         suffix = f" Diagnostics: {details.strip()}" if details.strip() else ""
         raise SessionManagerError(
-            f"Debug session manager did not become ready within {timeout}s.{suffix}"
+            f"Debug session manager did not become ready within {timeout}s "
+            f"(session record identity: {identity_status}).{suffix}"
         )
 
 

@@ -115,14 +115,10 @@ def test_deduplicates_case_insensitive_makefile_aliases(tmp_path: Path, monkeypa
     (tmp_path / "Makefile").write_text(
         "debug-server:\n\t@openocd -f interface/cmsis-dap.cfg\n", encoding="utf-8"
     )
-    original_samefile = Path.samefile
-
-    def samefile(path: Path, other: Path) -> bool:
-        if path.name.casefold() == other.name.casefold() == "makefile":
-            return True
-        return original_samefile(path, other)
-
-    monkeypatch.setattr(Path, "samefile", samefile)
+    monkeypatch.setattr(
+        "embedded_debug.discovery.os.path.samefile",
+        lambda left, right: Path(left).name.casefold() == Path(right).name.casefold() == "makefile",
+    )
     monkeypatch.setattr("embedded_debug.discovery.OpenOCDManager.port_open", lambda *a: False)
     result = discover_project(tmp_path)
     options = openocd_launch_options(result)
