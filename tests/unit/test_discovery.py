@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 from embedded_debug.discovery import discover_project, openocd_launch_options
 
@@ -120,3 +121,36 @@ def test_does_not_guess_interpolated_openocd_script_arguments(tmp_path: Path, mo
     result = discover_project(tmp_path)
     assert result["openocd_candidates"][0]["requires_review"] is True
     assert openocd_launch_options(result) == {}
+
+
+def test_discovers_nonstandard_openocd_loopback_listener(tmp_path: Path, monkeypatch) -> None:
+    address = SimpleNamespace(ip="127.0.0.1", port=4556)
+    listener = SimpleNamespace(status="LISTEN", laddr=address, pid=42)
+    monkeypatch.setattr("embedded_debug.discovery.psutil.net_connections", lambda **_: [listener])
+    monkeypatch.setattr(
+        "embedded_debug.discovery.psutil.Process",
+        lambda pid: SimpleNamespace(exe=lambda: "/tools/openocd"),
+    )
+    monkeypatch.setattr(
+        "embedded_debug.discovery.OpenOCDManager.port_open",
+        lambda host, port: port == 4556,
+    )
+    result = discover_project(tmp_path)
+    assert result["active_gdb_servers"] == [
+        {"host": "127.0.0.1", "port": 4556, "status": "reachable"}
+    ]
+
+
+def test_discovers_existing_make_and_cmake_flash_targets(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("embedded_debug.discovery.OpenOCDManager.port_open", lambda *a: False)
+    (tmp_path / "Makefile").write_text("all:\n\t@echo build\nflash:\n\t@openocd\n")
+    result = discover_project(tmp_path)
+    assert result["flash"]["argv"] == ["make", "flash"]
+
+    (tmp_path / "Makefile").unlink()
+    (tmp_path / "CMakeLists.txt").write_text(
+        "project(example)\nadd_custom_target(flash COMMAND openocd)\n"
+    )
+    (tmp_path / "build").mkdir()
+    result = discover_project(tmp_path)
+    assert result["flash"]["argv"] == ["cmake", "--build", "build", "--target", "flash"]

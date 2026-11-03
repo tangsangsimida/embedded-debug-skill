@@ -9,6 +9,8 @@ import shlex
 from pathlib import Path
 from typing import Any
 
+import psutil
+
 from .openocd.manager import OpenOCDManager
 
 _SKIP = {".git", ".venv", "venv", "node_modules", "__pycache__", ".tox"}
@@ -197,6 +199,87 @@ def _build_candidate(root: Path, tasks: list[dict[str, Any]]) -> dict[str, Any] 
     return None
 
 
+def _openocd_listening_ports() -> set[int]:
+    """Find loopback listeners owned by an OpenOCD process, when observable.
+
+    These are candidates only: the GDB/MI handshake remains the authority that
+    confirms a candidate is actually a usable GDB server.
+    """
+    ports: set[int] = set()
+    try:
+        connections = psutil.net_connections(kind="tcp")
+    except (psutil.Error, OSError):
+        return ports
+    for connection in connections:
+        if connection.status != psutil.CONN_LISTEN or not connection.laddr:
+            continue
+        address = connection.laddr.ip
+        if address not in {"127.0.0.1", "::1", "0.0.0.0", "::"}:
+            continue
+        if not connection.pid:
+            continue
+        try:
+            name = Path(psutil.Process(connection.pid).exe()).name.casefold()
+        except (psutil.Error, OSError):
+            continue
+        if name in {"openocd", "openocd.exe"}:
+            ports.add(int(connection.laddr.port))
+    return ports
+
+
+def _flash_candidate(root: Path, tasks: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for task in tasks:
+        if any(
+            word in str(task.get("label", "")).lower()
+            for word in ("flash", "program", "upload")
+        ):
+            return task
+    makefiles = [root / "Makefile", root / "makefile", *sorted(root.glob("*.mk"))]
+    target_pattern = re.compile(r"^([A-Za-z0-9_.-]+)\s*:(?![=])")
+    for path in makefiles:
+        if not path.is_file():
+            continue
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            match = target_pattern.match(line)
+            if match and match.group(1).lower() in {"flash", "program", "upload", "load"}:
+                return {
+                    "label": match.group(1),
+                    "argv": ["make", match.group(1)],
+                    "source": str(path),
+                }
+    cmake_targets: list[str] = []
+    custom_target = re.compile(r"add_custom_target\s*\(\s*([A-Za-z0-9_.-]+)", re.IGNORECASE)
+    for path in (root / "CMakeLists.txt", *sorted(root.glob("**/CMakeLists.txt"))):
+        if not path.is_file() or any(part in _SKIP for part in path.parts):
+            continue
+        try:
+            source = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        cmake_targets.extend(
+            match.group(1)
+            for match in custom_target.finditer(source)
+            if match.group(1).lower() in {"flash", "program", "upload", "load"}
+        )
+    if cmake_targets:
+        build_dir = next(
+            (name for name in ("build", "cmake-build-debug", "cmake-build-release")
+             if (root / name).is_dir()),
+            None,
+        )
+        if build_dir:
+            return {
+                "label": cmake_targets[0],
+                "argv": ["cmake", "--build", build_dir, "--target", cmake_targets[0]],
+                "source": "CMakeLists.txt",
+            }
+    return None
+
+
 def discover_project(
     root: Path | None = None, ports: tuple[int, ...] = (3333, 3334, 2331)
 ) -> dict[str, Any]:
@@ -207,11 +290,6 @@ def discover_project(
     for config in launches:
         if config.get("elf"):
             elfs.insert(0, {"path": config["elf"], "source": config["source"]})
-    active = [
-        {"host": "127.0.0.1", "port": port, "status": "reachable"}
-        for port in ports
-        if OpenOCDManager.port_open("127.0.0.1", port)
-    ]
     openocd_launches = [
         item
         for item in launches
@@ -270,21 +348,27 @@ def discover_project(
             }
         )
     config_candidates.extend(_script_openocd_commands(project))
-    flash_task = next(
-        (
-            task
-            for task in tasks
-            if any(
-                word in str(task.get("label", "")).lower()
-                for word in ("flash", "program", "upload")
-            )
-        ),
-        None,
-    )
+    candidate_ports = set(ports) | _openocd_listening_ports()
+    for candidate in config_candidates:
+        port = candidate.get("gdb_port")
+        if isinstance(port, int) and not isinstance(port, bool):
+            candidate_ports.add(port)
+        elif isinstance(port, str) and port.isdigit():
+            candidate_ports.add(int(port))
+        target = candidate.get("gdb_target")
+        if isinstance(target, str) and ":" in target:
+            host, raw_port = target.rsplit(":", 1)
+            if host in {"localhost", "127.0.0.1", "::1"} and raw_port.isdigit():
+                candidate_ports.add(int(raw_port))
+    active = [
+        {"host": "127.0.0.1", "port": port, "status": "reachable"}
+        for port in sorted(candidate_ports)
+        if OpenOCDManager.port_open("127.0.0.1", port)
+    ]
     return {
         "project_root": str(project),
         "build": _build_candidate(project, tasks),
-        "flash": flash_task,
+        "flash": _flash_candidate(project, tasks),
         "build_tasks": tasks,
         "debug_configurations": launches,
         "openocd_candidates": config_candidates,

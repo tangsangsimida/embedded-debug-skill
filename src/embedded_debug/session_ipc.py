@@ -1,11 +1,11 @@
-"""Authenticated, local Unix-socket client for the persistent debug daemon."""
+"""Authenticated loopback IPC client for the persistent debug daemon."""
 
 from __future__ import annotations
 
 import json
-import socket
 from typing import Any
 
+from .platforms import get_platform
 from .session_store import daemon_identity_matches, read_session
 
 
@@ -17,9 +17,14 @@ def request_session(operation: str, **params: Any) -> dict[str, Any]:
     info = read_session()
     if not info or not daemon_identity_matches(info):
         raise SessionUnavailable("No verified EmbeddedDebug session manager is running")
-    socket_path = str(info.get("socket_path", ""))
-    if not socket_path:
-        raise SessionUnavailable("Debug session has no IPC socket record")
+    endpoint = info.get("ipc_endpoint")
+    if not isinstance(endpoint, dict):
+        # Keep sessions started by the prior POSIX-only CLI usable during upgrade.
+        socket_path = info.get("socket_path")
+        if isinstance(socket_path, str) and socket_path:
+            endpoint = {"kind": "unix", "path": socket_path}
+        else:
+            raise SessionUnavailable("Debug session has no IPC endpoint record")
     request = {
         "session_id": info["session_id"],
         "token": info["token"],
@@ -27,14 +32,13 @@ def request_session(operation: str, **params: Any) -> dict[str, Any]:
         "params": params,
     }
     try:
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as channel:
+        with get_platform().connect_ipc(endpoint) as channel:
             timeout = (
                 150.0
                 if operation == "flash"
                 else max(35.0, float(info.get("gdb_timeout", 10.0)) + 10.0)
             )
             channel.settimeout(timeout)
-            channel.connect(socket_path)
             channel.sendall(json.dumps(request, separators=(",", ":")).encode() + b"\n")
             with channel.makefile("rb") as stream:
                 response = stream.readline(1_048_577)

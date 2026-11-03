@@ -10,6 +10,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TextIO
 
+from ..platforms import get_platform
+
 
 class OpenOCDError(RuntimeError):
     pass
@@ -98,14 +100,16 @@ class OpenOCDManager:
         if self.log_file:
             self.log_file.parent.mkdir(parents=True, exist_ok=True)
             self._log_handle = self.log_file.open("a", encoding="utf-8")
+        launch_args = get_platform().executable_argv(exe, *args[1:])
         self.process = subprocess.Popen(
-            args, stdout=self._log_handle or subprocess.DEVNULL, stderr=subprocess.STDOUT, text=True
+            launch_args,
+            stdout=self._log_handle or subprocess.DEVNULL,
+            stderr=subprocess.STDOUT,
+            text=True,
+            **get_platform().creation_options(),
         )
-        proc_executable = Path(f"/proc/{self.process.pid}/exe")
-        try:
-            self.process_executable = str(proc_executable.resolve(strict=True))
-        except OSError:
-            self.process_executable = str(Path(exe).resolve())
+        identity = get_platform().process_identity(self.process.pid)
+        self.process_executable = identity.executable if identity else str(Path(exe).resolve())
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if self.process.poll() is not None:

@@ -20,6 +20,8 @@ def request_cancel(_signum, _frame) -> None:
 
 
 signal.signal(signal.SIGINT, request_cancel)
+if hasattr(signal, "SIGBREAK"):
+    signal.signal(signal.SIGBREAK, request_cancel)
 
 
 def emit(line: str) -> None:

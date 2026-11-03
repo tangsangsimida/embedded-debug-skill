@@ -36,8 +36,25 @@ def _matches_build_info(command: Sequence[str]) -> bool:
 
 
 def _cached_cli() -> Path:
-    base = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
-    return base / "embedded-debug-skill" / PINNED_VERSION / "bin" / "edbg"
+    override = os.environ.get("EDBG_CACHE_HOME") or os.environ.get("XDG_CACHE_HOME")
+    if override:
+        base = Path(override).expanduser()
+    elif sys.platform == "win32":
+        base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData/Local"))
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library/Caches"
+    else:
+        base = Path.home() / ".cache"
+    scripts = "Scripts" if sys.platform == "win32" else "bin"
+    command = "edbg.exe" if sys.platform == "win32" else "edbg"
+    return base / "embedded-debug-skill" / PINNED_VERSION / scripts / command
+
+
+def _venv_python(cli_path: Path) -> Path:
+    root = cli_path.parent.parent
+    if sys.platform == "win32":
+        return root / "Scripts" / "python.exe"
+    return root / "bin" / "python"
 
 
 def _run_cached(cli: Path, args: Sequence[str]) -> int:
@@ -107,7 +124,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not options.install_python_cli:
         print(
             "EmbeddedDebug CLI is not installed. After explicit user authorization, run:\n"
-            "  python3 skills/embedded-debug/scripts/run_edbg.py "
+            f"  {sys.executable} skills/embedded-debug/scripts/run_edbg.py "
             "--install-python-cli doctor --json",
             file=sys.stderr,
         )
@@ -153,9 +170,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             file=sys.stderr,
         )
         return create.returncode
-    venv_python = cached_cli.parent / "python"
+    venv_python = _venv_python(cached_cli)
     install = subprocess.run(
-        [str(venv_python), "-m", "pip", "install", "--no-deps", SOURCE],
+        [str(venv_python), "-m", "pip", "install", SOURCE],
         capture_output=True,
         text=True,
         check=False,

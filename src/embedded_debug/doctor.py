@@ -5,10 +5,12 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
 from .discovery import discover_project
+from .platforms import get_platform
 
 
 def inspect_tool(
@@ -29,7 +31,11 @@ def inspect_tool(
         return item
     try:
         result = subprocess.run(
-            [path, "--version"], capture_output=True, text=True, timeout=timeout, check=False
+            get_platform().executable_argv(path, "--version"),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
         )
         if result.returncode != 0:
             item["status"] = "invalid"
@@ -52,7 +58,7 @@ def inspect_gdb_mi(executable: str, timeout: float = 3.0) -> str:
         return "unknown"
     try:
         result = subprocess.run(
-            [path, "--interpreter=mi2", "--quiet"],
+            get_platform().executable_argv(path, "--interpreter=mi2", "--quiet"),
             input="1-gdb-version\n2-gdb-exit\n",
             capture_output=True,
             text=True,
@@ -73,7 +79,7 @@ def doctor(
 ) -> dict[str, Any]:
     paths = tool_paths or {}
     tools = [
-        inspect_tool("Python", os.environ.get("PYTHON", "python3"), required=True),
+        inspect_tool("Python", os.environ.get("PYTHON", sys.executable), required=True),
         inspect_tool("ARM GCC", paths.get("gcc", "arm-none-eabi-gcc"), required=False),
         inspect_tool("ARM GDB", paths.get("gdb", "arm-none-eabi-gdb"), required=False),
         inspect_tool("OpenOCD", paths.get("openocd", "openocd"), required=False),
@@ -113,6 +119,12 @@ def doctor(
 
 
 def _shell_guidance() -> str:
+    if sys.platform == "win32":
+        if os.environ.get("PSModulePath"):
+            return '$env:Path = "C:\\path\\to\\toolchain\\bin;$env:Path"'
+        if os.environ.get("COMSPEC"):
+            return 'set "PATH=C:\\path\\to\\toolchain\\bin;%PATH%"'
+        return "Add the toolchain bin directory to PATH in Windows Environment Variables."
     shell = Path(os.environ.get("SHELL", "")).name
     if shell == "fish":
         return "fish_add_path /path/to/toolchain/bin"
