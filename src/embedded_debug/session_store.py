@@ -147,13 +147,12 @@ def openocd_identity_matches(info: dict[str, Any]) -> bool:
 
 
 def gdb_identity_matches(info: dict[str, Any]) -> bool:
-    if _process_identity(info, "gdb_pid", "gdb_start_time", "gdb_process_executable") != "match":
-        return False
-    try:
-        identity = get_platform().process_identity(int(info["gdb_pid"]))
-    except (TypeError, ValueError, KeyError):
-        return False
-    return identity is not None and "--interpreter=mi2" in identity.command_line
+    # PID, creation time, executable, and user identify the exact child process.
+    # Requiring a readable argv is not portable: macOS may omit process arguments.
+    return (
+        _process_identity(info, "gdb_pid", "gdb_start_time", "gdb_process_executable")
+        == "match"
+    )
 
 
 def _terminate_verified_process(
