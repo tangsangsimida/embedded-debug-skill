@@ -95,6 +95,9 @@ class DebugSessionDaemon:
         self.server = server
         self.ipc_endpoint = endpoint
         print("session daemon IPC ready", file=sys.stderr, flush=True)
+        daemon_identity = get_platform().process_identity(os.getpid())
+        if daemon_identity is None:
+            raise SessionFailure("Could not verify the session daemon process identity")
         save_session(
             {
                 "schema": 3,
@@ -102,9 +105,10 @@ class DebugSessionDaemon:
                 "session_name": current_session_name(),
                 "token": self.settings["token"],
                 "daemon_pid": os.getpid(),
-                "process_start_time": process_start_time(os.getpid()),
+                "process_start_time": daemon_identity.created,
                 "ipc_endpoint": endpoint,
-                "python_executable": str(Path(sys.executable).resolve()),
+                "python_executable": daemon_identity.executable,
+                "daemon_username": daemon_identity.username,
                 "host": self.settings["host"],
                 "gdb_port": int(self.settings["gdb_port"]),
                 "gdb_executable": self.settings["gdb_executable"],

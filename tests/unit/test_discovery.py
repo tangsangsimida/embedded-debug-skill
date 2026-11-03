@@ -105,7 +105,9 @@ def test_discovers_literal_openocd_command_from_makefile(tmp_path: Path, monkeyp
     )
     monkeypatch.setattr("embedded_debug.discovery.OpenOCDManager.port_open", lambda *a: False)
     result = discover_project(tmp_path)
-    assert len(result["openocd_candidates"]) == 1, result["openocd_candidates"]
+    assert len(result["openocd_candidates"]) == 1, [
+        item["source"] for item in result["openocd_candidates"]
+    ]
     options = openocd_launch_options(result)
     assert options["config_files"] == ["interface/cmsis-dap.cfg", "board/custom.cfg"]
     assert options["gdb_port"] == 4555

@@ -16,6 +16,19 @@ from .openocd.manager import OpenOCDManager
 _SKIP = {".git", ".venv", "venv", "node_modules", "__pycache__", ".tox"}
 
 
+def _same_file_entry(left: Path, right: Path) -> bool:
+    try:
+        if os.path.samefile(left, right):
+            return True
+    except OSError:
+        pass
+    try:
+        left_stat, right_stat = left.stat(), right.stat()
+    except OSError:
+        return False
+    return left_stat.st_dev == right_stat.st_dev and left_stat.st_ino == right_stat.st_ino
+
+
 def _expand_workspace(value: str, root: Path) -> Path:
     value = value.replace("${workspaceFolder}", str(root)).replace("${workspaceRoot}", str(root))
     return (root / value).resolve() if not Path(value).is_absolute() else Path(value)
@@ -151,11 +164,8 @@ def _script_openocd_commands(root: Path) -> list[dict[str, Any]]:
         )
         if normalized_alias:
             continue
-        try:
-            if any(os.path.samefile(path, previous) for previous in unique_paths):
-                continue
-        except OSError:
-            pass
+        if any(_same_file_entry(path, previous) for previous in unique_paths):
+            continue
         unique_paths.append(path)
     for path in unique_paths:
         if not path.is_file():
