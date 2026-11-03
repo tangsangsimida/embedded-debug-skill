@@ -7,13 +7,16 @@ npx skills add tangsangsimida/embedded-debug-skill --skill embedded-debug -a cod
 npx skills add tangsangsimida/embedded-debug-skill --skill embedded-debug -a claude-code -g -y
 ```
 
-CLI 需要 Python 3.11+。硬件调试还需要用户自行安装的 OpenOCD、匹配目标架构的 GDB、调试器及现有工程中的调试配置。安装 Skill 不会安装或修改系统工具链。CLI 与 Skill 版本匹配后，可在用户授权下由内置启动器从 Skill 启动器固定的不可变 Git 提交安装；当前仓库提交不是稳定 Release。项目以 Windows、Linux、macOS 为目标平台，CI 在三种系统上运行 Python、Mock GDB/MI、会话及 Skill 安装检查；这不代表任何平台已完成实体 USB 调试器或 MCU 实测。即使缺少 OpenOCD/GDB，也可运行 `edbg --help`、`edbg --version` 和 `edbg doctor`。
+CLI 需要 Python 3.11+。硬件调试还需要用户自行安装的 OpenOCD、匹配目标架构的 GDB、调试器及现有工程中的调试配置。安装 Skill 不会安装或修改系统工具链。CLI 与 Skill 版本匹配后，可在用户授权下由内置启动器从 Skill 启动器固定的不可变 Git 提交安装；当前仓库提交不是稳定 Release。CI 采用 Python 3.11 作为兼容性基线，在多个 Linux、Windows、macOS 版本及 x64/arm64 runner 上执行 Python、Mock GDB/MI、会话及 Skill 安装检查；这不代表任何平台已完成实体 USB 调试器或 MCU 实测。即使缺少 OpenOCD/GDB，也可运行 `edbg --help`、`edbg --version` 和 `edbg doctor`。
 
-| 平台 | Python/CLI 与 Mock 会话 CI | USB 调试器 / 实体 MCU |
+| 平台 | Python 3.11 CLI 与 Mock CI runner | USB 调试器 / 实体 MCU |
 |---|---|---|
-| Windows | Python 3.11–3.13 CI | 未做硬件验证 |
-| Linux | Python 3.11–3.14 CI | 未做硬件验证 |
-| macOS | Python 3.11–3.13 CI | 未做硬件验证 |
+| Linux x64 | Ubuntu 24.04、26.04 | 未做硬件验证 |
+| Linux arm64 | Ubuntu 24.04 | 未做硬件验证 |
+| Windows x64 | Server 2022、Server 2025 | 未做硬件验证 |
+| Windows arm64 | Windows 11 arm64 | 未做硬件验证 |
+| macOS Intel | macOS 15 Intel | 未做硬件验证 |
+| macOS arm64 | macOS 15、26 | 未做硬件验证 |
 
 ## 能力范围
 

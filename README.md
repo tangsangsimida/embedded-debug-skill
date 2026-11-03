@@ -9,13 +9,16 @@ npx skills add tangsangsimida/embedded-debug-skill --skill embedded-debug -a cod
 npx skills add tangsangsimida/embedded-debug-skill --skill embedded-debug -a claude-code -g -y
 ```
 
-Requirements: Python 3.11+ for the CLI. Hardware operations additionally require user-installed OpenOCD, a GDB matching the target architecture, and a working project debug setup. Skill installation does not install or modify system toolchains. The current development candidate is not a stable release. `edbg doctor` works even if the embedded toolchain is missing. The project targets Windows, Linux, and macOS; CI runs package, Mock GDB/MI, session, and Skill installation checks on all three. This does not claim physical USB adapter or MCU validation on any platform.
+Requirements: Python 3.11+ for the CLI. Hardware operations additionally require user-installed OpenOCD, a GDB matching the target architecture, and a working project debug setup. Skill installation does not install or modify system toolchains. The current development candidate is not a stable release. `edbg doctor` works even if the embedded toolchain is missing. CI uses Python 3.11 as its compatibility baseline across multiple Linux, Windows, and macOS releases and x64/arm64 runners. This does not claim physical USB adapter or MCU validation on any platform.
 
-| Platform | Python/CLI + Mock session CI | USB adapter / physical MCU |
+| Platform | Python 3.11 CLI + Mock CI runners | USB adapter / physical MCU |
 |---|---|---|
-| Windows | Python 3.11–3.13 CI matrix | Not hardware validated |
-| Linux | Python 3.11–3.14 CI matrix | Not hardware validated |
-| macOS | Python 3.11–3.13 CI matrix | Not hardware validated |
+| Linux x64 | Ubuntu 24.04, 26.04 | Not hardware validated |
+| Linux arm64 | Ubuntu 24.04 | Not hardware validated |
+| Windows x64 | Server 2022, Server 2025 | Not hardware validated |
+| Windows arm64 | Windows 11 arm64 | Not hardware validated |
+| macOS Intel | macOS 15 Intel | Not hardware validated |
+| macOS arm64 | macOS 15, 26 | Not hardware validated |
 
 Ask your agent: “Use EmbeddedDebug Skill to inspect my OpenOCD environment and connect using the current project's configuration. Read CPU registers and the current backtrace.” The agent should check first, use your OpenOCD files and matching GDB, then report exact errors or observed output. Flashing, reset, and writes require explicit authorization.
 
