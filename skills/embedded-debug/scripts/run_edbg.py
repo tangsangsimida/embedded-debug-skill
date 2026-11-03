@@ -127,7 +127,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         if result.stdout:
             print(result.stdout, end="")
         return result.returncode
-    python = shutil.which("python3") or sys.executable
+    # The interpreter running this launcher is the environment the user chose.
+    # Prefer it over another python3 earlier in PATH (which may lack venv).
+    python = sys.executable
+    interpreter_version = (sys.version_info.major, sys.version_info.minor)
+    if interpreter_version < (3, 11):
+        print(
+            "Python 3.11+ is required to install the CLI; current interpreter is "
+            f"{sys.version.split()[0]}. Rerun with a supported Python interpreter.",
+            file=sys.stderr,
+        )
+        return 2
     cached_cli.parent.mkdir(parents=True, exist_ok=True)
     create = subprocess.run(
         [python, "-m", "venv", str(cached_cli.parent.parent)],
