@@ -6,6 +6,7 @@ import fcntl
 import json
 import os
 import secrets
+import signal
 import subprocess
 import sys
 import time
@@ -14,10 +15,12 @@ from typing import Any
 
 from .session_ipc import SessionUnavailable, request_session
 from .session_store import (
+    daemon_identity_is_stale,
     daemon_identity_matches,
     read_session,
     session_dir,
     session_path,
+    stop_stale_owned_gdb,
     stop_stale_owned_openocd,
 )
 
@@ -59,9 +62,17 @@ def start_session(settings: dict[str, Any], timeout: float = 20.0) -> dict[str, 
             raise SessionManagerError(
                 "A live session manager could not answer IPC; refusing to start a competing GDB"
             )
+        if old and not daemon_identity_is_stale(old):
+            raise SessionManagerError(
+                "A previous debug session identity cannot be verified; refusing to start "
+                "a competing GDB/OpenOCD session"
+            )
         if old:
+            stop_stale_owned_gdb(old)
             stop_stale_owned_openocd(old)
-            session_path().unlink(missing_ok=True)
+            current_record = read_session()
+            if current_record and current_record.get("session_id") == old.get("session_id"):
+                session_path().unlink(missing_ok=True)
         session_id = uuid.uuid4().hex
         runtime_settings = dict(settings)
         runtime_settings["token"] = secrets.token_urlsafe(32)
@@ -111,11 +122,17 @@ def start_session(settings: dict[str, Any], timeout: float = 20.0) -> dict[str, 
                     f"Debug session manager exited with status {return_code}. {details.strip()}"
                 )
             time.sleep(0.05)
-        process.terminate()
+        process.send_signal(signal.SIGTERM)
         try:
-            process.wait(timeout=3)
+            process.wait(timeout=7)
         except subprocess.TimeoutExpired:
-            process.kill()
+            try:
+                if process.poll() is None and os.getpgid(process.pid) == process.pid:
+                    os.killpg(process.pid, signal.SIGKILL)
+            except OSError:
+                pass
+            if process.poll() is None:
+                process.kill()
             process.wait()
         settings_path.unlink(missing_ok=True)
         raise SessionManagerError(f"Debug session manager did not become ready within {timeout}s")
@@ -152,8 +169,18 @@ def _ensure_compatible(settings: dict[str, Any], current: dict[str, Any]) -> Non
 def session_status() -> dict[str, Any]:
     info = read_session()
     if not info or not daemon_identity_matches(info):
-        if info:
-            session_path().unlink(missing_ok=True)
+        if info and daemon_identity_is_stale(info):
+            stop_stale_owned_gdb(info)
+            stop_stale_owned_openocd(info)
+            current = read_session()
+            if current and current.get("session_id") == info.get("session_id"):
+                session_path().unlink(missing_ok=True)
+        elif info:
+            return {
+                "active": False,
+                "target_state": "unknown",
+                "error": "Session manager identity is unavailable; refusing to replace it",
+            }
         return {"active": False, "target_state": "disconnected"}
     try:
         response = request_session("status")
@@ -175,8 +202,16 @@ def session_status() -> dict[str, Any]:
 def stop_session(timeout: float = 6.0) -> dict[str, Any]:
     info = read_session()
     if not info or not daemon_identity_matches(info):
-        if info:
-            session_path().unlink(missing_ok=True)
+        if info and daemon_identity_is_stale(info):
+            stop_stale_owned_gdb(info)
+            stop_stale_owned_openocd(info)
+            current = read_session()
+            if current and current.get("session_id") == info.get("session_id"):
+                session_path().unlink(missing_ok=True)
+        elif info:
+            raise SessionManagerError(
+                "Session manager identity is unavailable; refusing to stop or replace processes"
+            )
         return {"stopped": False, "reason": "no verified session manager"}
     try:
         response = request_session("stop")

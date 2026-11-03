@@ -203,7 +203,7 @@ def parser() -> argparse.ArgumentParser:
     ):
         session_start.add_argument(flag, **options)
     session_start.set_defaults(canonical_command="session-start")
-    for action_name in ("status", "stop", "recover"):
+    for action_name in ("status", "stop", "recover", "cancel"):
         leaf = session_actions.add_parser(action_name)
         leaf.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
         if action_name == "recover":
@@ -211,6 +211,15 @@ def parser() -> argparse.ArgumentParser:
                 "--authorize-openocd-restart",
                 action="store_true",
                 help="authorize restarting the configured OpenOCD service if it has exited",
+            )
+        if action_name == "cancel":
+            leaf.add_argument(
+                "--authorize-run",
+                action="store_true",
+                help=(
+                    "authorize interrupting the active GDB operation and possibly "
+                    "halting target execution"
+                ),
             )
         leaf.set_defaults(canonical_command=f"session-{action_name}")
     return p
@@ -540,6 +549,24 @@ def run(argv: Sequence[str] | None = None) -> int:
             )
             if args.authorize_openocd_restart:
                 _audit("openocd-restart", "session recovery")
+            _emit(
+                Envelope(
+                    name,
+                    True,
+                    target=response.get("target", {}),
+                    target_state=response.get("target_state", "unknown"),
+                    data=response.get("data"),
+                ),
+                args.json,
+            )
+            return 0
+        if name == "session-cancel":
+            if not args.authorize_run:
+                raise PermissionError(
+                    "Cancelling a GDB operation requires explicit --authorize-run"
+                )
+            _audit("cancel-gdb-operation", "active debug session")
+            response = session_operation("cancel", authorized_run=True)
             _emit(
                 Envelope(
                     name,

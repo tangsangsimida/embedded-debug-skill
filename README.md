@@ -105,7 +105,7 @@ edbg breakpoint add main --json
 edbg session stop
 ```
 
-When discovery finds an existing launch configuration or server, `edbg connect` can use it without repeating its settings. A session reuses the running GDB Server, stores ownership metadata, and keeps one GDB/MI process for subsequent CLI operations. Recovery reconnects GDB without restarting OpenOCD; restarting a failed OpenOCD instance requires `--authorize-openocd-restart`.
+When discovery finds an existing launch configuration or server, `edbg connect` can use it without repeating its settings. A session reuses the running GDB Server, stores ownership metadata, and keeps one GDB/MI process for subsequent CLI operations. `edbg session cancel --authorize-run` can interrupt a stalled GDB command from another terminal and may halt target execution. Recovery reconnects GDB without restarting OpenOCD; restarting a failed OpenOCD instance requires `--authorize-openocd-restart`.
 
 The Python GDB controller exposes register, expression, frame, breakpoint, thread-selection, and memory operations. Capability values are confirmed from GDB/OpenOCD responses; where the backend cannot probe safely, it reports `unknown`.
 
