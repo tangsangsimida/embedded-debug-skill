@@ -5,13 +5,33 @@ from __future__ import annotations
 
 import argparse
 import importlib.metadata
+import os
 import shutil
 import subprocess
 import sys
 from collections.abc import Sequence
+from pathlib import Path
 
 PINNED_VERSION = "0.1.0"
 SOURCE = "git+https://github.com/tangsangsimida/embedded-debug-skill.git@c0cd70d"
+
+
+def _cached_cli() -> Path:
+    base = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+    return base / "embedded-debug-skill" / PINNED_VERSION / "bin" / "edbg"
+
+
+def _run_cached(cli: Path, args: Sequence[str]) -> int:
+    try:
+        result = subprocess.run(
+            [str(cli), "--version"], capture_output=True, text=True, timeout=5, check=False
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return 2
+    if result.returncode != 0 or result.stdout.strip() != PINNED_VERSION:
+        print("Cached EmbeddedDebug CLI failed its pinned version check.", file=sys.stderr)
+        return 2
+    return subprocess.run([str(cli), *args]).returncode
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -52,6 +72,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
+    cached_cli = _cached_cli()
+    if cached_cli.is_file():
+        return _run_cached(cached_cli, remainder)
     if not options.install_python_cli:
         print(
             "EmbeddedDebug CLI is not installed. After explicit user authorization, run:\n"
@@ -69,35 +92,41 @@ def main(argv: Sequence[str] | None = None) -> int:
         if result.stdout:
             print(result.stdout, end="")
         return result.returncode
-    if shutil.which("python3"):
-        install = subprocess.run(
-            [
-                "python3",
-                "-m",
-                "pip",
-                "install",
-                "--user",
-                "--no-deps",
-                SOURCE,
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
+    python = shutil.which("python3") or sys.executable
+    cached_cli.parent.mkdir(parents=True, exist_ok=True)
+    create = subprocess.run(
+        [python, "-m", "venv", str(cached_cli.parent.parent)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if create.returncode:
+        print(create.stderr or "Could not create an isolated Python environment.", file=sys.stderr)
+        print(
+            "Install Python 3.11+ with venv support, or install uv and retry. "
+            "No system toolchain or shell configuration was changed.",
+            file=sys.stderr,
         )
-        if install.stdout:
-            print(install.stdout, end="", file=sys.stderr)
-        if install.stderr:
-            print(install.stderr, end="", file=sys.stderr)
-        if install.returncode:
-            print(
-                "Python package installation failed. Use an isolated package manager or a "
-                "virtual environment; system toolchains were not changed.",
-                file=sys.stderr,
-            )
-            return install.returncode
-        return subprocess.run(["python3", "-m", "embedded_debug.cli", *remainder]).returncode
-    print("Python 3 is unavailable; install Python 3.11+ and retry.", file=sys.stderr)
-    return 2
+        return create.returncode
+    venv_python = cached_cli.parent / "python"
+    install = subprocess.run(
+        [str(venv_python), "-m", "pip", "install", "--no-deps", SOURCE],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if install.stdout:
+        print(install.stdout, end="", file=sys.stderr)
+    if install.stderr:
+        print(install.stderr, end="", file=sys.stderr)
+    if install.returncode:
+        print(
+            "Pinned CLI installation failed. Check Python venv/pip support and network access; "
+            "system toolchains were not changed.",
+            file=sys.stderr,
+        )
+        return install.returncode
+    return _run_cached(cached_cli, remainder)
 
 
 if __name__ == "__main__":

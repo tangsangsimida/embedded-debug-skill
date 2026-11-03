@@ -48,6 +48,25 @@ jobs:
           assert 'explicit user authorization' in text
           assert 'scripts/run_edbg.py' in text
           PY
+      - name: Bootstrap CLI from the Skill's immutable source pin
+        env:
+          HOME: ${{ runner.temp }}/isolated-cli-home
+          SKILL_AGENT: ${{ matrix.agent }}
+        run: |
+          python -m venv "$RUNNER_TEMP/cli-runtime"
+          skill="$HOME/.agents/skills/embedded-debug"
+          if [ "$SKILL_AGENT" = "claude-code" ]; then
+            skill="$HOME/.claude/skills/embedded-debug"
+          fi
+          "$RUNNER_TEMP/cli-runtime/bin/python" "$skill/scripts/run_edbg.py" --install-python-cli --version
+          "$RUNNER_TEMP/cli-runtime/bin/python" "$skill/scripts/run_edbg.py" --help
+          "$RUNNER_TEMP/cli-runtime/bin/python" "$skill/scripts/run_edbg.py" --json doctor > "$RUNNER_TEMP/doctor-bootstrap.json"
+          python - <<'PY'
+          import json, os
+          data = json.load(open(os.path.join(os.environ['RUNNER_TEMP'], 'doctor-bootstrap.json')))
+          assert data['success'] is True
+          assert 'debug_tools_ready' in data['data']
+          PY
       - name: Build and install the exact package artifact
         run: |
           python -m pip install -e '.[dev]'
