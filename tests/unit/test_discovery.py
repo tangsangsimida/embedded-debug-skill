@@ -32,7 +32,7 @@ def test_discovers_vscode_openocd_and_elf(tmp_path: Path, monkeypatch) -> None:
     assert options["config_files"] == ["interface/custom.cfg", "target/custom.cfg"]
     assert options["host"] == "localhost"
     assert options["gdb_port"] == 3338
-    assert result["elf_candidates"][0]["path"].endswith("build/app.elf")
+    assert Path(result["elf_candidates"][0]["path"]).parts[-2:] == ("build", "app.elf")
 
 
 def test_discovers_build_without_edbg_config(tmp_path: Path, monkeypatch) -> None:

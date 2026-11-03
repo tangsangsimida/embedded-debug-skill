@@ -129,7 +129,7 @@ def test_connect_reuses_vscode_configuration_without_edbg_file_or_target_file(
         code, connected = _invoke(tmp_path, env, "connect")
         assert code == 0, connected
         assert connected["target"]["connection"] == "connected"
-        assert connected["data"]["elf"].endswith("build/firmware.elf")
+        assert Path(connected["data"]["elf"]).parts[-2:] == ("build", "firmware.elf")
         assert not (tmp_path / ".edbg.toml").exists()
         assert not (tmp_path / "edbg.toml").exists()
         starts = [

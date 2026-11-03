@@ -35,7 +35,7 @@ def test_launcher_uses_windows_local_appdata_and_venv_scripts(monkeypatch, tmp_p
 def test_launcher_uses_macos_cache_location(monkeypatch, tmp_path) -> None:
     launcher = load_launcher()
     monkeypatch.setattr(sys, "platform", "darwin")
-    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(Path, "home", classmethod(lambda _cls: tmp_path))
     monkeypatch.delenv("EDBG_CACHE_HOME", raising=False)
     monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
     cli = launcher._cached_cli()
