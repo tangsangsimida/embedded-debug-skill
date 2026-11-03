@@ -561,7 +561,9 @@ def test_gdb_timeout_and_abnormal_exit_can_be_recovered(
     env = _env(monkeypatch, tmp_path)
     crash_file = tmp_path / "crash-on"
     env["EDBG_FAKE_GDB_CRASH_FILE"] = str(crash_file)
+    env["EDBG_FAKE_GDB_SLOW_DELAY"] = "1.0"
     monkeypatch.setenv("EDBG_FAKE_GDB_CRASH_FILE", str(crash_file))
+    monkeypatch.setenv("EDBG_FAKE_GDB_SLOW_DELAY", "1.0")
     server = _listener()
     try:
         _start(
@@ -571,7 +573,7 @@ def test_gdb_timeout_and_abnormal_exit_can_be_recovered(
             "--gdb",
             str(MOCKS / "fake_gdb.py"),
             "--gdb-timeout",
-            "0.08",
+            "0.5",
         )
         code, timeout = _invoke(tmp_path, env, "variable", "read", "slow_value")
         assert code == 2
