@@ -50,7 +50,9 @@ else:
     assert not Path(result["path"]).exists()
 
 
-@pytest.mark.parametrize("name", ["../escape", "/absolute", "dir/CON", "dir/a\\b"])
+@pytest.mark.parametrize(
+    "name", ["../escape", "/absolute", "dir/CON", "dir/a\\b", "dir\\..\\escape"]
+)
 def test_archive_digest_and_traversal_fail_without_install(tmp_path, monkeypatch, name):
     monkeypatch.setenv("EDBG_CACHE_HOME", str(tmp_path / "cache"))
     path, digest = archive(tmp_path, name, "bad")

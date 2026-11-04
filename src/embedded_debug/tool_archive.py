@@ -101,6 +101,9 @@ def _unpack(archive: Path, root: Path) -> None:
     if zipfile.is_zipfile(archive):
         with zipfile.ZipFile(archive) as package:
             for item in package.infolist():
+                # ZipInfo normalizes host separators and truncates NULs; validate
+                # the original archive name before inspecting the normalized one.
+                _relative(item.orig_filename)
                 mode = item.external_attr >> 16
                 if stat.S_ISLNK(mode) or (stat.S_IFMT(mode) not in (0, stat.S_IFREG, stat.S_IFDIR)):
                     raise ValueError(f"Archive contains a link or special file: {item.filename}")
