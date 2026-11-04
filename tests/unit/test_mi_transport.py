@@ -1,4 +1,5 @@
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -52,6 +53,21 @@ def test_async_flood_is_bounded_and_does_not_block_results() -> None:
         transport.command("-test-flood")
         assert len(transport.async_records) == 500
         assert transport.async_records_dropped == 4500
+        assert transport._records.empty()
+        assert transport.command("-gdb-show architecture").results["value"] == "arm"
+    finally:
+        transport.close()
+
+
+def test_idle_async_flood_is_bounded_and_later_commands_succeed() -> None:
+    transport = MITransport(str(MOCK_GDB), timeout=5)
+    try:
+        transport.start()
+        transport.command("-test-idle-flood")
+        deadline = time.monotonic() + 5
+        while transport.async_records_dropped < 9500 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert transport.async_records_dropped == 9500
         assert transport._records.empty()
         assert transport.command("-gdb-show architecture").results["value"] == "arm"
     finally:

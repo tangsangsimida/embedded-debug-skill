@@ -75,6 +75,8 @@ edbg --json --gdb /path/to/gdb --openocd /path/to/openocd connect \
 
 OpenOCD 配置及其引用的脚本是可执行 Tcl。启动新服务前须审查全部配置并授权 `--authorize-openocd-config`。程序设置 loopback 并在启动时检查所属进程的 TCP 监听地址；这不是沙箱，已授权 Tcl 仍可能在检查前或之后暴露监听，也可能启动其他进程。外部已有服务不在该检查范围内。使用 `edbg doctor --json` 检查工具及版本；缺失的可选工具只影响依赖它的具体操作。
 
+用户审查工具包来源并独立核实 SHA-256 后，可授权 `edbg environment install-tool-archive` 将 GDB 或 OpenOCD 安装到用户隔离缓存，并将返回路径通过 `--gdb` 或 `--openocd` 用于会话。该操作不修改系统工具链和全局 PATH；支持的归档格式及回滚限制见[安装说明](docs/installation.md)。
+
 ## 目标适配
 
 STM32F407 示例仅展示如何引用用户本机 OpenOCD 脚本，不构成硬件支持承诺。GD32E5 模板要求用户提供并验证适用的 target 配置，不暗示其与 STM32 兼容。CMSIS-DAP v1/v2 或其他适配器能否工作取决于用户的 OpenOCD 构建、配置和实际响应。

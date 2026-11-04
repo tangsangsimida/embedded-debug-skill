@@ -74,6 +74,10 @@ for line in sys.stdin:
         for _ in range(5000):
             emit('=thread-created,id="1"')
         emit(f"{token}^done")
+    elif command == "-test-idle-flood":
+        emit(f"{token}^done")
+        for _ in range(10000):
+            emit('=thread-created,id="1"')
     elif command == "-data-list-register-names":
         emit(f'{token}^done,register-names=["r0","pc"]')
     elif command == "-break-list":
