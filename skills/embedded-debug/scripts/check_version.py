@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import re
 import subprocess
@@ -45,6 +46,14 @@ def digest_commit(revision: str) -> tuple[str, str]:
     return digest.hexdigest(), version
 
 
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument(
+    "--allow-worktree-drift",
+    action="store_true",
+    help="allow development source edits while still validating the immutable CLI pin",
+)
+args = parser.parse_args()
+
 root = Path(__file__).resolve().parents[3]
 package_version = tomllib.loads((root / "pyproject.toml").read_text())["project"]["version"]
 skill = (root / "skills/embedded-debug/SKILL.md").read_text()
@@ -80,9 +89,18 @@ if source_version != package_version:
     raise SystemExit(
         f"Pinned source version {source_version} does not match current package {package_version}"
     )
-if source_digest != worktree_digest or source_digest != fingerprint_match.group(1):
+if source_digest != fingerprint_match.group(1):
+    raise SystemExit(
+        "Pinned source digest does not match the immutable source commit; update the launcher pin"
+    )
+if source_digest != worktree_digest and not args.allow_worktree_drift:
     raise SystemExit(
         "Pinned source digest does not match current Python CLI source; update the launcher pin"
+    )
+if source_digest != worktree_digest:
+    print(
+        "Development source differs from the pinned immutable CLI; "
+        "release validation stays strict"
     )
 print(
     f"Package/Skill version {package_version} and immutable CLI source "

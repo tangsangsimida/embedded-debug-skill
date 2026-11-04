@@ -9,11 +9,11 @@ npx skills add tangsangsimida/embedded-debug-skill --skill embedded-debug -a cod
 npx skills add tangsangsimida/embedded-debug-skill --skill embedded-debug -a claude-code -g -y
 ```
 
-Requirements: Python 3.11+ for the CLI. Hardware operations additionally require user-installed OpenOCD, a GDB matching the target architecture, and a working project debug setup. Skill installation does not install or modify system toolchains. The current development candidate is not a stable release. `edbg doctor` works even if the embedded toolchain is missing. CI uses Python 3.11 as its compatibility baseline across multiple Linux, Windows, and macOS releases and x64/arm64 runners. This does not claim physical USB adapter or MCU validation on any platform.
+Requirements: Python 3.11+ for the CLI. Hardware operations additionally require user-installed OpenOCD, a GDB matching the target architecture, and a working project debug setup. Skill installation does not install or modify system toolchains. The current development candidate is not a stable release. `edbg doctor` works even if the embedded toolchain is missing. CI uses Python 3.11 as its compatibility baseline across multiple Linux, Windows, and macOS releases and x64/arm64 runners. A local STM32H743/WCH-Link hardware smoke test passed via OpenOCD directly; EmbeddedDebug CLI/GDB-MI hardware integration remains unvalidated.
 
 | Platform | Python 3.11 CLI + Mock CI runners | USB adapter / physical MCU |
 |---|---|---|
-| Linux x64 | Ubuntu 24.04, 26.04 | Not hardware validated |
+| Linux x64 | Ubuntu 24.04, 26.04 | STM32H743/WCH-Link OpenOCD smoke passed; `edbg` GDB/MI not validated |
 | Linux arm64 | Ubuntu 24.04 | Not hardware validated |
 | Windows x64 | Server 2022, Server 2025 | Not hardware validated |
 | Windows arm64 | Windows 11 arm64 | Not hardware validated |
@@ -35,7 +35,7 @@ Ask your agent: “Use EmbeddedDebug Skill to inspect my OpenOCD environment and
 - Generic GDB controller primitives for target selection, architecture/register discovery, expression reads, stack frames, breakpoints, thread selection, and run-state tracking.
 - Agent Skill metadata and resource validation. Skills CLI repository-install tests are an explicit release gate.
 
-This is a candidate build; no stable Release or physical hardware validation is claimed. See [Validation status and roadmap](#validation-status-and-roadmap) for known limits.
+This is a candidate build; no stable Release is claimed. A direct OpenOCD smoke test on STM32H743 passed, but it did not exercise the EmbeddedDebug CLI/GDB-MI backend. See [Validation status and roadmap](#validation-status-and-roadmap) for known limits.
 
 ## Architecture
 
@@ -121,9 +121,11 @@ edbg breakpoint add main --json
 edbg session stop
 ```
 
+Ordinary variable reads accept simple identifier paths such as `motor_speed` and `controller.pid.kp`. Other GDB expressions may call functions or assign values, so they are refused unless the user has reviewed and authorized that operation with `--authorize-expression`.
+
 When discovery finds an existing launch configuration or server, `edbg connect` can use it without repeating its settings. A session reuses the running GDB Server, stores ownership metadata, and keeps one GDB/MI process for subsequent CLI operations. `edbg session cancel --authorize-run` can interrupt a stalled GDB command from another terminal and may halt target execution. Recovery reconnects GDB without restarting OpenOCD; restarting a failed OpenOCD instance requires `--authorize-openocd-restart`.
 
-The Python GDB controller exposes register, expression, frame, breakpoint, thread-selection, and memory operations. Capability values are confirmed from GDB/OpenOCD responses; where the backend cannot probe safely, it reports `unknown`.
+The Python GDB controller exposes register, variable, frame, breakpoint, thread-selection, and memory operations. Arbitrary expressions require `--authorize-expression`. Capability values are confirmed from GDB/OpenOCD responses; where the backend cannot probe safely, it reports `unknown`.
 
 ## Agent installation, update, and removal
 
@@ -159,7 +161,7 @@ Read-only inspection is the default. Pausing/resuming/stepping and adding/removi
 
 ## Validation status and roadmap
 
-The v0.1.0 minimum scope is project/tool discovery, GDB-verified OpenOCD connections, persistent GDB/MI inspection and guarded run control, system-first environment diagnostics, and validated Codex/Claude Skills installation. Advanced HardFault, RTOS/ThreadX, SVD, and telemetry diagnostics are roadmap items, not release blockers or current support claims. This candidate adds an executable opt-in HIL runner, but no source-level physical hardware test has been run yet.
+The v0.1.0 minimum scope is project/tool discovery, GDB-verified OpenOCD connections, persistent GDB/MI inspection and guarded run control, system-first environment diagnostics, and validated Codex/Claude Skills installation. Advanced HardFault, RTOS/ThreadX, SVD, and telemetry diagnostics are roadmap items, not release blockers or current support claims. The STM32H743 fixture has passed a direct OpenOCD flash/verify/run check and the user observed PC13 LED blinking. The opt-in HIL test through `edbg` and its GDB/MI backend has not yet been run on physical hardware.
 
 Daily PR CI keeps one Python 3.11 runner per OS family (Linux, Windows, macOS); a quick Ubuntu smoke installs the Skill for both Codex and Claude Code. The complete nine-platform × two-agent Skills CLI matrix runs nightly and on demand. Formal release validation also tests the exact release wheel across that full matrix before applying the stable-release gate. Stable Release is blocked by `release-readiness.toml` until the physical candidate HIL evidence and exact artifact install gates pass. Hardware tests require explicit opt-in and a user-supplied config and are skipped by default.
 

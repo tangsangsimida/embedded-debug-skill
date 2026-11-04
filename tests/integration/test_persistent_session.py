@@ -556,6 +556,48 @@ def test_session_conflict_and_unauthorized_hardware_operations_are_refused(
         second.close()
 
 
+def test_arbitrary_variable_expression_requires_explicit_authorization(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = _env(monkeypatch, tmp_path)
+    server = _listener()
+    try:
+        _start(tmp_path, env, server.getsockname()[1], "--gdb", str(MOCKS / "fake_gdb.py"))
+
+        code, denied = _invoke(tmp_path, env, "variable", "read", "motor_speed=1")
+        assert code == 2
+        assert denied["error"]["code"] == "AUTHORIZATION_REQUIRED"
+        assert "--authorize-expression" in denied["error"]["message"]
+        assert "-data-evaluate-expression" not in (tmp_path / "gdb.log").read_text()
+
+        code, accepted = _invoke(
+            tmp_path,
+            env,
+            "variable",
+            "read",
+            "set_speed(1)",
+            "--authorize-expression",
+        )
+        assert code == 0, accepted
+        assert accepted["data"]["value"] == "42"
+        assert '-data-evaluate-expression "set_speed(1)"' in (
+            tmp_path / "gdb.log"
+        ).read_text()
+        audit_entries = [
+            json.loads(line) for line in (tmp_path / "audit.jsonl").read_text().splitlines()
+        ]
+        assert any(
+            entry["action"] == "variable-evaluate" and entry["target"] == "set_speed(1)"
+            for entry in audit_entries
+        )
+
+        with pytest.raises(SessionManagerError, match="authorize-expression"):
+            session_operation("variable-evaluate", expression="motor_speed=2")
+    finally:
+        _stop(tmp_path, env)
+        server.close()
+
+
 def test_halt_and_breakpoints_require_authorization_in_cli_and_daemon(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

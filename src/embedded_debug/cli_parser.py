@@ -114,6 +114,14 @@ def parser() -> argparse.ArgumentParser:
     bp.add_argument("--authorize", action="store_true")
     var = command_parser("variable-read")
     var.add_argument("expression")
+    var.add_argument(
+        "--authorize-expression",
+        action="store_true",
+        help=(
+            "allow arbitrary GDB expression evaluation, which may execute code "
+            "or write target state"
+        ),
+    )
     mem = command_parser("memory-read")
     mem.add_argument("address", type=parse_int)
     mem.add_argument("--length", type=int, default=16)
@@ -156,6 +164,15 @@ def parser() -> argparse.ArgumentParser:
                 leaf.add_argument(arg_name, **options)
             if canonical in {"breakpoint-add", "breakpoint-remove"}:
                 leaf.add_argument("--authorize", action="store_true")
+            if canonical == "variable-read":
+                leaf.add_argument(
+                    "--authorize-expression",
+                    action="store_true",
+                    help=(
+                        "allow arbitrary GDB expression evaluation, which may execute code "
+                        "or write target state"
+                    ),
+                )
             leaf.set_defaults(canonical_command=canonical)
 
     add_nested("config", {"validate": ("config-validate", ())})

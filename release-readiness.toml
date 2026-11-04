@@ -2,7 +2,7 @@
 [release]
 stable_release_ready = false
 blockers = [
-  "No physical target/adapter end-to-end test has been run for this candidate.",
+  "The EmbeddedDebug CLI/GDB-MI path has not passed a physical target/adapter end-to-end test; the recorded STM32H743 smoke test used OpenOCD directly.",
   "The exact release candidate has not passed the isolated Skills CLI and CLI-install release gate.",
 ]
 minimum_scope = [

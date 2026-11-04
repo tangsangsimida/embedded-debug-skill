@@ -393,6 +393,7 @@ class DebugSessionDaemon:
             operation,
             authorized_run=bool(params.get("authorized_run")),
             authorized=bool(params.get("authorized")),
+            authorized_expression=bool(params.get("authorized_expression")),
         )
         if operation == "cancel":
             self.transport.cancel()
@@ -423,10 +424,15 @@ class DebugSessionDaemon:
         elif operation == "registers":
             self._require_halted()
             data = self.controller.registers_read()
-        elif operation == "variable-read":
+        elif operation in {"variable-read", "variable-evaluate"}:
             self._require_halted()
             expression = str(params["expression"])
-            data = {"expression": expression, "value": self.controller.variable_read(expression)}
+            data = {
+                "expression": expression,
+                "value": self.controller.variable_read(
+                    expression, allow_arbitrary=operation == "variable-evaluate"
+                ),
+            }
         elif operation == "backtrace":
             self._require_halted()
             data = self.controller.backtrace()

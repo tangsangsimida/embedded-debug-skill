@@ -1,6 +1,14 @@
 import json
+from pathlib import Path
 
 from embedded_debug.cli import run
+
+
+def test_pytest_imports_embedded_debug_from_this_checkout() -> None:
+    import embedded_debug
+
+    source = (Path(__file__).resolve().parents[2] / "src").resolve()
+    assert Path(embedded_debug.__file__).resolve().is_relative_to(source)
 
 
 def test_doctor_json_reports_without_hardware(monkeypatch, capsys) -> None:

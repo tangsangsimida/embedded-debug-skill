@@ -79,6 +79,6 @@ STM32F407 示例仅展示如何引用用户本机 OpenOCD 脚本，不构成硬�
 
 ## 安全
 
-只读检查为默认策略。暂停/继续/单步和断点增删需分别传入 `--authorize-run` 或 `--authorize`；烧录/擦除、复位、内存或寄存器写入、运行可能控制执行机构的固件、批量硬件测试，也需用户对具体操作明确授权。目标操作会写入审计日志。不得关闭急停、联锁和保护逻辑。停机读取不等于实时无扰动遥测。
+只读检查为默认策略。普通变量读取只接受 `motor_speed`、`controller.pid.kp` 这样的标识符路径。其他 GDB 表达式可能调用函数或赋值，默认拒绝；用户审查并授权具体表达式后才可使用 `--authorize-expression`。暂停/继续/单步和断点增删需分别传入 `--authorize-run` 或 `--authorize`；烧录/擦除、复位、内存或寄存器写入、运行可能控制执行机构的固件、批量硬件测试，也需用户对具体操作明确授权。目标操作会写入审计日志。不得关闭急停、联锁和保护逻辑。停机读取不等于实时无扰动遥测。
 
 参见 [安装说明](docs/installation.md)、[配置](docs/configuration.md)、[CLI 参考](docs/cli-reference.md)、[架构](docs/architecture.md) 和 [故障排查](docs/troubleshooting.md)。
