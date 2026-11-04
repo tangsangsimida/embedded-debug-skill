@@ -16,6 +16,7 @@ def test_evidence_writer_is_opt_in_and_uses_contract_fields(monkeypatch, tmp_pat
             True,
             target={"connection": "connected"},
             target_state="running",
+            target_state_before="halted",
             data={"state": "running"},
         )
     )
@@ -24,7 +25,7 @@ def test_evidence_writer_is_opt_in_and_uses_contract_fields(monkeypatch, tmp_pat
     assert record["step"] == "continue"
     assert record["source"] == "cli-json"
     assert record["authorization"] == "run"
-    assert record["target_state_before"] == "unknown"
+    assert record["target_state_before"] == "halted"
     assert record["target_state_after"] == "running"
     assert record["observations"] == {"state": "running"}
 

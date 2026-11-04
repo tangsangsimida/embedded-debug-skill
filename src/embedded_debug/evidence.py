@@ -40,7 +40,7 @@ def evidence_record(envelope: Envelope) -> dict[str, Any]:
         "source": "cli-json",
         "observed_at": envelope.timestamp,
         "success": envelope.success,
-        "target_state_before": "unknown",
+        "target_state_before": envelope.target_state_before,
         "target_state_after": envelope.target_state,
         "authorization": _authorization(envelope.command),
         "observations": envelope.data if envelope.success else [],
