@@ -1,3 +1,4 @@
+import threading
 from pathlib import Path
 
 import pytest
@@ -40,6 +41,40 @@ def test_reconnect_restarts_debugger_process() -> None:
     assert transport.process.pid != first_pid
     assert transport.command("-gdb-show architecture").results["value"] == "arm"
     transport.close()
+
+
+def test_delayed_old_reader_stays_bound_to_its_process(monkeypatch) -> None:
+    transport = MITransport(str(MOCK_GDB), timeout=2)
+    original_start = threading.Thread.start
+    delayed_readers: list[threading.Thread] = []
+
+    def delay_first_stdout_reader(thread: threading.Thread) -> None:
+        target = getattr(thread, "_target", None)
+        owner = getattr(target, "__self__", None)
+        if (
+            owner is transport
+            and getattr(target, "__name__", "") == "_read_stdout"
+            and not delayed_readers
+        ):
+            delayed_readers.append(thread)
+            return
+        original_start(thread)
+
+    monkeypatch.setattr(threading.Thread, "start", delay_first_stdout_reader)
+    try:
+        transport.start()
+        first_process = transport.process
+        transport.reconnect()
+        second_process = transport.process
+        assert first_process is not None and second_process is not None
+        assert first_process.pid != second_process.pid
+
+        assert len(delayed_readers) == 1
+        original_start(delayed_readers[0])
+        assert transport.command("-gdb-show architecture").results["value"] == "arm"
+        assert transport.state != "disconnected"
+    finally:
+        transport.close()
 
 
 def test_stderr_is_drained_concurrently_without_blocking_mi(tmp_path, monkeypatch) -> None:

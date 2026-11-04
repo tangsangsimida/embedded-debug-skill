@@ -89,3 +89,31 @@ def test_mock_hil_exercises_run_control_breakpoints_and_cleanup(
     assert ["breakpoint", "remove", "1"] in calls
     assert ["step", "--authorize-run"] in calls
     assert ["continue", "--authorize-run"] in calls
+
+
+def test_hil_preserves_primary_failure_when_session_cleanup_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, ...]] = []
+
+    def invoke(_config: dict[str, object], *args: str) -> dict[str, object]:
+        calls.append(args)
+        if args == ("session", "status"):
+            return {"success": True, "data": {"active": False}}
+        if args == ("connect",):
+            return {"success": True, "target": {"connection": "connected"}}
+        if args == ("status",):
+            return {"success": True, "target_state": "halted"}
+        if args == ("registers",):
+            raise AssertionError("register read failed")
+        if args == ("session", "stop"):
+            raise AssertionError("session stop failed")
+        raise AssertionError(f"unexpected HIL command: {args!r}")
+
+    monkeypatch.setattr(HIL, "_invoke", invoke)
+
+    with pytest.raises(AssertionError, match="register read failed") as raised:
+        HIL.run_hil({"session": "failure-case"})
+
+    assert any("session stop failed" in note for note in raised.value.__notes__)
+    assert calls[-1] == ("session", "stop")
