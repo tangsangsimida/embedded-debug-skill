@@ -2,8 +2,8 @@
 [release]
 stable_release_ready = false
 blockers = [
-  "The exact formal release candidate has not passed its required physical target/adapter end-to-end acceptance; a prior STM32H743 candidate is documented.",
-  "The exact release candidate has not passed the isolated Skills CLI and CLI-install release gate.",
+  "No formal release candidate tag has been designated; the exact merged master commit has HIL evidence, but that evidence is not a release-candidate acceptance record.",
+  "The reusable release gate has not run against an exact release wheel inside the protected release environment.",
 ]
 minimum_scope = [
   "OpenOCD-configured target discovery and verified GDB/MI connection.",
