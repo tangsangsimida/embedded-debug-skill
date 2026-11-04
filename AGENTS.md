@@ -11,3 +11,4 @@
 - Use authenticated loopback IPC only. The session token is private state; never treat an open local TCP port as authorization.
 - Isolate simultaneous target sessions with `edbg --session <name>` and refuse to attach a second manager to an endpoint already owned by another named session.
 - Cross-platform claims require Windows, Linux, and macOS CI. CI/mock success is not physical USB adapter or MCU validation.
+- For the recorded physical fixture and verified read-only probe command, see `docs/hardware-test-platform.md`; re-detect hardware before each session.
