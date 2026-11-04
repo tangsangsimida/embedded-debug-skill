@@ -11,6 +11,15 @@ from embedded_debug.build_info import build_info
 from embedded_debug.environment import inspect_environment, install_user_cli, remediation_plan
 
 
+def _create_fake_cli_venv(destination: Path) -> None:
+    scripts = destination / ("Scripts" if os.name == "nt" else "bin")
+    python = "python.exe" if os.name == "nt" else "python"
+    edbg = "edbg.exe" if os.name == "nt" else "edbg"
+    scripts.mkdir(parents=True)
+    (scripts / python).touch()
+    (scripts / edbg).touch()
+
+
 def test_inspection_uses_overrides_and_keeps_optional_tools_optional(monkeypatch) -> None:
     seen: list[tuple[str, str]] = []
 
@@ -71,10 +80,7 @@ def test_authorized_cli_install_is_versioned_and_reuses_completed_install(
             pass
 
         def create(self, destination):
-            scripts = destination / "bin"
-            scripts.mkdir(parents=True)
-            (scripts / "python").touch()
-            (scripts / "edbg").touch()
+            _create_fake_cli_venv(destination)
 
     calls = []
 
@@ -106,8 +112,7 @@ def test_failed_user_cli_install_rolls_back_only_partial_version(tmp_path, monke
             pass
 
         def create(self, destination):
-            (destination / "bin").mkdir(parents=True)
-            (destination / "bin" / "python").touch()
+            _create_fake_cli_venv(destination)
 
     monkeypatch.setattr("embedded_debug.environment.venv.EnvBuilder", FakeBuilder)
     monkeypatch.setattr(
@@ -127,9 +132,7 @@ def test_source_mismatch_rolls_back_new_user_cli_environment(tmp_path, monkeypat
             pass
 
         def create(self, destination):
-            (destination / "bin").mkdir(parents=True)
-            (destination / "bin" / "python").touch()
-            (destination / "bin" / "edbg").touch()
+            _create_fake_cli_venv(destination)
 
     def fake_run(command, **_kwargs):
         if "-m" in command:
@@ -159,10 +162,7 @@ def test_user_cli_install_falls_back_when_ensurepip_is_unavailable(tmp_path, mon
         def create(self, destination):
             if self.with_pip:
                 raise SystemExit("ensurepip unavailable")
-            scripts = destination / "bin"
-            scripts.mkdir(parents=True)
-            (scripts / "python").touch()
-            (scripts / "edbg").touch()
+            _create_fake_cli_venv(destination)
 
     calls = []
 
