@@ -168,26 +168,66 @@ def run_hil(config: dict[str, Any]) -> dict[str, Any]:
             _invoke(config, "halt", "--authorize-run")
             results["halted"] = _wait_for_state(config, "halted", "after halt")
             _require_state(results["halted"], "halted", "after halt")
-        return results
-    finally:
-        if connection_attempted:
-            cleanup_errors: list[str] = []
-            if connected and run_control and os.environ.get("EDBG_HARDWARE_RUN_CONTROL") == "1":
-                try:
-                    _invoke(config, "halt", "--authorize-run")
-                except (AssertionError, OSError, subprocess.SubprocessError) as exc:
-                    cleanup_errors.append(f"final halt failed: {exc}")
-            for number in breakpoint_numbers if connected else []:
-                try:
-                    _invoke(config, "breakpoint", "remove", number)
-                except (AssertionError, OSError, subprocess.SubprocessError) as exc:
-                    cleanup_errors.append(f"breakpoint {number} cleanup failed: {exc}")
-            results["cleanup"] = _invoke(config, "session", "stop")
-            stopped = results["cleanup"].get("data", {}).get("stopped")
-            if connected and not stopped:
-                raise AssertionError("EmbeddedDebug session did not confirm cleanup")
-            if cleanup_errors:
-                raise AssertionError("HIL cleanup issues: " + "; ".join(cleanup_errors))
+    except BaseException as primary_error:
+        cleanup_errors = _cleanup_session(
+            config,
+            results,
+            connected=connected,
+            connection_attempted=connection_attempted,
+            run_control=run_control,
+            breakpoint_numbers=breakpoint_numbers,
+        )
+        if cleanup_errors:
+            primary_error.add_note("HIL cleanup issues: " + "; ".join(cleanup_errors))
+        raise
+
+    cleanup_errors = _cleanup_session(
+        config,
+        results,
+        connected=connected,
+        connection_attempted=connection_attempted,
+        run_control=run_control,
+        breakpoint_numbers=breakpoint_numbers,
+    )
+    if cleanup_errors:
+        raise AssertionError("HIL cleanup issues: " + "; ".join(cleanup_errors))
+    return results
+
+
+def _cleanup_session(
+    config: dict[str, Any],
+    results: dict[str, Any],
+    *,
+    connected: bool,
+    connection_attempted: bool,
+    run_control: bool,
+    breakpoint_numbers: list[str],
+) -> list[str]:
+    """Try every cleanup step and return diagnostics without masking test failures."""
+    if not connection_attempted:
+        return []
+
+    cleanup_errors: list[str] = []
+    if connected and run_control and os.environ.get("EDBG_HARDWARE_RUN_CONTROL") == "1":
+        try:
+            _invoke(config, "halt", "--authorize-run")
+        except Exception as exc:
+            cleanup_errors.append(f"final halt failed: {exc}")
+    for number in breakpoint_numbers if connected else []:
+        try:
+            _invoke(config, "breakpoint", "remove", number)
+        except Exception as exc:
+            cleanup_errors.append(f"breakpoint {number} cleanup failed: {exc}")
+    try:
+        cleanup = _invoke(config, "session", "stop")
+    except Exception as exc:
+        cleanup_errors.append(f"session stop failed: {exc}")
+    else:
+        results["cleanup"] = cleanup
+        stopped = cleanup.get("data", {}).get("stopped")
+        if connected and not stopped:
+            cleanup_errors.append("EmbeddedDebug session did not confirm cleanup")
+    return cleanup_errors
 
 
 def _require_state(response: dict[str, Any], state: str, context: str) -> None:
