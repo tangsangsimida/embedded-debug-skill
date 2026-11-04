@@ -41,6 +41,59 @@ def test_environment_install_cli_requires_authorization(capsys) -> None:
     assert result["error"]["code"] == "AUTHORIZATION_REQUIRED"
 
 
+def test_environment_path_changes_require_authorization_and_emit_json(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    from pathlib import Path
+
+    home = tmp_path / "home"
+    home.mkdir()
+    tool_dir = tmp_path / "existing-bin"
+    tool_dir.mkdir()
+    rc_file = home / ".bashrc"
+    rc_file.write_text("# user config\n", encoding="utf-8")
+    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+
+    add_args = [
+        "--json",
+        "environment",
+        "path-add",
+        "--directory",
+        str(tool_dir),
+        "--shell",
+        "bash",
+    ]
+    assert run(add_args) == 2
+    denied = json.loads(capsys.readouterr().out)
+    assert denied["error"]["code"] == "AUTHORIZATION_REQUIRED"
+    assert rc_file.read_text(encoding="utf-8") == "# user config\n"
+
+    assert run([*add_args, "--authorize"]) == 0
+    added = json.loads(capsys.readouterr().out)
+    assert added["success"] is True
+    assert added["data"]["changed"] is True
+    assert str(tool_dir) in rc_file.read_text(encoding="utf-8")
+
+    assert (
+        run(
+            [
+                "--json",
+                "environment",
+                "path-remove",
+                "--shell",
+                "bash",
+                "--authorize",
+            ]
+        )
+        == 0
+    )
+    removed = json.loads(capsys.readouterr().out)
+    assert removed["success"] is True
+    assert removed["data"]["changed"] is True
+    assert rc_file.read_text(encoding="utf-8") == "# user config\n"
+
+
 def test_connect_reuses_existing_server_with_mock_gdb(tmp_path, monkeypatch, capsys) -> None:
     import socket
     from pathlib import Path

@@ -10,9 +10,11 @@ import contextlib
 import io
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import venv
 from pathlib import Path
 from typing import Any
@@ -30,6 +32,14 @@ DEFAULT_TOOLS = {
     "openocd": ("OpenOCD", "openocd", False),
     "objcopy": ("ARM Objcopy", "arm-none-eabi-objcopy", False),
     "size": ("ARM Size", "arm-none-eabi-size", False),
+}
+
+PATH_BLOCK_START = "# >>> embedded-debug-skill PATH >>>"
+PATH_BLOCK_END = "# <<< embedded-debug-skill PATH <<<"
+SHELL_RC_FILES = {
+    "bash": ".bashrc",
+    "zsh": ".zshrc",
+    "fish": ".config/fish/config.fish",
 }
 
 
@@ -87,6 +97,167 @@ def remediation_plan(
             path_example = "Add the tool's bin directory to PATH using your shell or OS settings."
         items.append({"tool": executable, "action": message, "path_guidance": path_example})
     return items
+
+
+def repair_user_path(
+    directory: str | Path, *, shell: str | None = None, authorized: bool = False
+) -> dict[str, Any]:
+    """Add a directory to the selected user's shell PATH using a managed block.
+
+    Only the current user's bash, zsh, or fish startup file is changed, and only
+    after explicit authorization. The operation is idempotent and reversible via
+    :func:`rollback_user_path`.
+    """
+    if not authorized:
+        raise PermissionError("PATH repair requires explicit authorization")
+    selected_shell = _selected_shell(shell)
+    candidate = Path(directory).expanduser()
+    if not candidate.is_absolute():
+        raise ValueError("PATH directory must be an absolute path")
+    try:
+        resolved = candidate.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError(f"PATH directory does not exist: {candidate}") from exc
+    if not resolved.is_dir():
+        raise ValueError(f"PATH entry is not a directory: {resolved}")
+
+    rc_file = Path.home() / SHELL_RC_FILES[selected_shell]
+    existing = _read_shell_file(rc_file)
+    quoted = shlex.quote(str(resolved))
+    if selected_shell == "fish":
+        path_line = f"set -gx PATH {quoted} $PATH"
+    else:
+        path_line = f"export PATH={quoted}:\"$PATH\""
+    original_final_newline = _managed_final_newline(existing)
+    original_file_existed = (
+        _managed_file_existed(existing) if PATH_BLOCK_START in existing else rc_file.exists()
+    )
+    block = (
+        f"{PATH_BLOCK_START}\n"
+        f"# original-file-existed: {'true' if original_file_existed else 'false'}\n"
+        f"# original-final-newline: {'true' if original_final_newline else 'false'}\n"
+        f"{path_line}\n{PATH_BLOCK_END}"
+    )
+    updated, changed = _replace_managed_block(existing, block)
+    if changed:
+        _atomic_write_user_file(rc_file, updated)
+    return {
+        "shell": selected_shell,
+        "file": str(rc_file),
+        "directory": str(resolved),
+        "changed": changed,
+    }
+
+
+def rollback_user_path(*, shell: str | None = None, authorized: bool = False) -> dict[str, Any]:
+    """Remove only EmbeddedDebug-Skill's managed PATH block from a shell file."""
+    if not authorized:
+        raise PermissionError("PATH rollback requires explicit authorization")
+    selected_shell = _selected_shell(shell)
+    rc_file = Path.home() / SHELL_RC_FILES[selected_shell]
+    existing = _read_shell_file(rc_file)
+    original_file_existed = (
+        _managed_file_existed(existing) if PATH_BLOCK_START in existing else True
+    )
+    updated, changed = _remove_managed_block(existing)
+    if changed:
+        if not original_file_existed and not updated:
+            rc_file.unlink()
+        else:
+            _atomic_write_user_file(rc_file, updated)
+    return {"shell": selected_shell, "file": str(rc_file), "changed": changed}
+
+
+def _selected_shell(shell: str | None) -> str:
+    selected = (shell or Path(os.environ.get("SHELL", "")).name).casefold()
+    if selected not in SHELL_RC_FILES:
+        raise ValueError("Select a supported shell explicitly: bash, zsh, or fish")
+    return selected
+
+
+def _read_shell_file(path: Path) -> str:
+    if path.is_symlink():
+        raise ValueError(f"Refusing to modify a symlinked shell startup file: {path}")
+    try:
+        return path.read_text(encoding="utf-8") if path.exists() else ""
+    except (OSError, UnicodeError) as exc:
+        raise RuntimeError(f"Could not read shell startup file {path}: {exc}") from exc
+
+
+def _replace_managed_block(existing: str, block: str) -> tuple[str, bool]:
+    start = existing.find(PATH_BLOCK_START)
+    end = existing.find(PATH_BLOCK_END, start + len(PATH_BLOCK_START)) if start >= 0 else -1
+    if start >= 0 and end >= 0:
+        end += len(PATH_BLOCK_END)
+        if existing[start:end] == block:
+            return existing, False
+    current, _ = _remove_managed_block(existing)
+    separator = "" if not current or current.endswith("\n") else "\n"
+    updated = f"{current}{separator}{block}\n"
+    return updated, True
+
+
+def _remove_managed_block(existing: str) -> tuple[str, bool]:
+    start_count = existing.count(PATH_BLOCK_START)
+    end_count = existing.count(PATH_BLOCK_END)
+    if start_count != end_count or start_count > 1:
+        raise ValueError("Malformed or duplicate EmbeddedDebug PATH markers; refusing edit")
+    if not start_count:
+        return existing, False
+    start = existing.index(PATH_BLOCK_START)
+    end = existing.index(PATH_BLOCK_END, start) + len(PATH_BLOCK_END)
+    line_start = existing.rfind("\n", 0, start) + 1
+    if end < len(existing) and existing[end] == "\n":
+        end += 1
+    updated = existing[:line_start] + existing[end:]
+    block = existing[start:end]
+    if "# original-final-newline: false\n" in block and not updated[line_start:]:
+        if line_start and updated[:line_start].endswith("\n"):
+            updated = updated[:line_start - 1]
+    return updated, True
+
+
+def _managed_final_newline(existing: str) -> bool:
+    if PATH_BLOCK_START not in existing:
+        return existing.endswith("\n")
+    if "# original-final-newline: true\n" in existing:
+        return True
+    if "# original-final-newline: false\n" in existing:
+        return False
+    raise ValueError("Managed PATH block metadata is missing; refusing to replace it")
+
+
+def _managed_file_existed(existing: str) -> bool:
+    if "# original-file-existed: true\n" in existing:
+        return True
+    if "# original-file-existed: false\n" in existing:
+        return False
+    raise ValueError("Malformed or incomplete PATH block file metadata; refusing to edit")
+
+
+def _atomic_write_user_file(path: Path, contents: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists() and path.is_symlink():
+        raise ValueError(f"Refusing to replace a symlinked shell startup file: {path}")
+    old_mode = path.stat().st_mode & 0o777 if path.exists() else 0o600
+    temporary: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=path.parent, prefix=".edbg-path-", delete=False
+        ) as stream:
+            temporary = stream.name
+            stream.write(contents)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temporary, old_mode)
+        os.replace(temporary, path)
+    except OSError as exc:
+        if temporary:
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
+        raise RuntimeError(f"Could not update user shell file {path}: {exc}") from exc
 
 
 def install_user_cli(source: str, *, authorized: bool = False) -> dict[str, str]:
