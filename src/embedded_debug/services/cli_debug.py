@@ -253,6 +253,7 @@ def handle_debug_command(name: str, args: argparse.Namespace, cfg: ProjectConfig
                 True,
                 target=target_info,
                 target_state=target_state,
+                target_state_before=response.get("target_state_before", "unknown"),
                 data=response_data,
                 diagnostics=(
                     [f"Capabilities: {response_data['capabilities']}"]

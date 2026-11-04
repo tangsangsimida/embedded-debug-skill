@@ -29,6 +29,7 @@ class Envelope:
     success: bool
     target: dict[str, Any] = field(default_factory=dict)
     target_state: str = "unknown"
+    target_state_before: str = "unknown"
     data: Any = None
     error: dict[str, str] | None = None
     diagnostics: list[str] = field(default_factory=list)

@@ -346,6 +346,7 @@ class DebugSessionDaemon:
             self.transport.state = "disconnected"
         if self.transport.process and self.transport.process.poll() is not None:
             self.transport.state = "disconnected"
+        target_state_before = self.transport.state
         if operation == "status":
             link_state = "unknown"
             link_error: str | None = None
@@ -376,6 +377,8 @@ class DebugSessionDaemon:
             )
             return {
                 "success": True,
+                "target_state_before": target_state_before,
+                "target_state": self.transport.state,
                 "data": {
                     "active": connected,
                     "session_name": current_session_name(),
@@ -414,6 +417,7 @@ class DebugSessionDaemon:
             return {
                 "success": True,
                 "data": recovery_data,
+                "target_state_before": target_state_before,
                 "target_state": self.transport.state,
             }
         if operation == "stop":
@@ -421,6 +425,7 @@ class DebugSessionDaemon:
             return {
                 "success": True,
                 "data": {"stopping": True},
+                "target_state_before": target_state_before,
                 "target_state": self.transport.state,
             }
         require_operation_authorized(
@@ -435,6 +440,7 @@ class DebugSessionDaemon:
                 "success": True,
                 "data": {"cancel_requested": True},
                 "target": self.target,
+                "target_state_before": target_state_before,
                 "target_state": self.transport.state,
             }
         if operation == "halt":
@@ -539,6 +545,7 @@ class DebugSessionDaemon:
             "success": True,
             "data": data,
             "target": self.target,
+            "target_state_before": target_state_before,
             "target_state": self.transport.state,
             "capabilities": self.capabilities,
         }
