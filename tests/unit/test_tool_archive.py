@@ -13,7 +13,11 @@ from embedded_debug.tool_archive import install_tool_archive, remove_tool_archiv
 def archive(tmp_path, name, content):
     path = tmp_path / "tool.zip"
     with zipfile.ZipFile(path, "w") as package:
-        package.writestr(name, content)
+        entry = zipfile.ZipInfo(name)
+        # ZipInfo normally rewrites the host separator on Windows. Preserve the
+        # exact untrusted archive entry so this test exercises the same bytes.
+        entry.filename = name
+        package.writestr(entry, content)
     return path, hashlib.sha256(path.read_bytes()).hexdigest()
 
 
