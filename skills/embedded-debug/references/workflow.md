@@ -50,7 +50,9 @@ actually contradicts them.
 
 ## 4. Execute
 
-Use the existing `edbg` JSON interface. Keep one named session for a target and
+Use the existing `edbg` JSON interface. For an auditable run, set
+`EDBG_EVIDENCE_FILE` to a user-selected JSONL path before invoking the CLI and
+retain the raw GDB/OpenOCD logs separately. Keep one named session for a target and
 check its status before every halted-state-dependent operation. A read of
 registers, memory, variables, or a stack is valid only after the response proves
 `target_state=halted`; a command result of `^done` alone is not proof of a halt.

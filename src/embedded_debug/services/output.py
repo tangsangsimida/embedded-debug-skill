@@ -11,6 +11,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..evidence import append_evidence
 from ..models import Envelope
 from ..platforms import get_platform
 
@@ -24,6 +25,7 @@ class ExternalResult:
 
 
 def emit(envelope: Envelope, as_json: bool) -> None:
+    append_evidence(envelope)
     if as_json:
         print(json.dumps(envelope.as_dict(), ensure_ascii=False, default=str))
         if envelope.error:

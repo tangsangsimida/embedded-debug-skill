@@ -4,6 +4,14 @@
 
 `--json` emits `success`, `command`, `timestamp`, `target`, `target_state`, `data`, `error`, and `diagnostics`. Exit code 0 means command/diagnostic completed; 2 indicates rejected or failed operation; 1 indicates a build failure. A successful `doctor` command may report missing optional tools in its data.
 
+Set `EDBG_EVIDENCE_FILE=/path/to/trace.jsonl` to opt into an append-only,
+machine-readable evidence record for every emitted CLI envelope. Records use the
+Skill evidence fields and preserve unknown authorization/state instead of
+guessing. The file is protected by an interprocess lock; a recording failure is
+reported on stderr but does not change the debug operation result. This captures
+CLI evidence, not raw GDB/OpenOCD logs; retain those artifacts separately when a
+diagnosis needs them.
+
 `edbg environment inspect --json` independently discovers the Python runtime, ARM GCC/GDB, OpenOCD, objcopy, and size utilities. CLI overrides, project tool paths, then PATH take precedence. `edbg environment plan --json` returns advisory install and PATH guidance only. `edbg environment path-add --directory <existing-bin-dir> --shell <bash|zsh|fish> --authorize` adds an idempotent marked PATH block to the selected current-user shell file; `environment path-remove --shell <bash|zsh|fish> --authorize` removes only that block. Both reject missing authorization and audit actual changes. `edbg environment install-cli --source <pip-source> --authorize` installs the explicitly selected Python CLI into a versioned user cache and verifies its version and source digest against the running Skill; it never installs embedded system tools. A failed install removes only its incomplete versioned environment; previous CLI versions remain available for rollback.
 
 `environment install-tool-archive` accepts a reviewed local or HTTPS ZIP/tar source, independently obtained SHA-256, archive-relative executable and `gdb` or `openocd` kind; `--authorize` is required. It extracts into a private user cache, rejects links and special files, checks the executable, and returns its session-specific path. `environment remove-tool-archive --sha256 <digest> --authorize` rolls back a managed cache entry. See [installation](installation.md) for the trust and archive-format limits.
