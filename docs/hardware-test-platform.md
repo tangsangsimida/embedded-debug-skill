@@ -35,7 +35,7 @@ Do not add `cmsis-dap info`: it is not a valid command in the observed OpenOCD b
 
 ## Scope and Safety
 
-Confirmed: USB probe enumeration, CMSIS-DAP adapter information, SWD DPIDR, Cortex-M7 examination, and the two read-only register values above. The hardware run below additionally confirms an ELF was programmed and verified, reset into execution, and advanced its application loop counter. A source-level GDB session, breakpoints, stepping, physical LED observation, and the generic HIL test harness remain unvalidated. The supplied schematic was checked for the HSE crystal and PC13 LED paths only; other circuits and actual board wiring have not been independently validated.
+Confirmed: USB probe enumeration, CMSIS-DAP adapter information, SWD DPIDR, Cortex-M7 examination, and the two read-only register values above. The hardware run below additionally confirms an ELF was programmed and verified, reset into execution, and advanced its application loop counter. The later recorded CLI/GDB-MI test covers source-level inspection, breakpoint hit, stepping and the generic HIL runner; the physical LED observation was reported by the user. The supplied schematic was checked for the HSE crystal and PC13 LED paths only; other circuits and actual board wiring have not been independently validated.
 
 ## Authorized Firmware Run (2026-11-05)
 
@@ -66,4 +66,12 @@ The generic HIL runner is `tests/hardware/hil_runner.py`; the pytest entry point
 }
 ```
 
-Run the read-only stages with `env EDBG_HARDWARE_TESTS=1 EDBG_HARDWARE_CONFIG=/path/to/hil.json pytest -m hardware`. The runner expects the target already halted before stop-mode reads. For an explicitly authorized run-control check, set `authorize_run_control` to `true` in the reviewed config and separately set `EDBG_HARDWARE_RUN_CONTROL=1`; the test will halt, single-step, continue, pause again, and stop its session. The CLI additionally requires `--authorize-run` for each halt/step/continue. Breakpoint insertion/removal likewise requires `authorize_breakpoints: true` in the HIL file and `--authorize` on each CLI command. Do not enable either option with firmware that may control actuators or safety-relevant outputs. This fixture has not had the source-level HIL flow run; only the previously documented adapter/core/register probe observations are confirmed.
+Run the read-only stages with `env EDBG_HARDWARE_TESTS=1 EDBG_HARDWARE_CONFIG=/path/to/hil.json pytest -m hardware`. The runner expects the target already halted before stop-mode reads. For an explicitly authorized run-control check, set `authorize_run_control` to `true` in the reviewed config and separately set `EDBG_HARDWARE_RUN_CONTROL=1`; the test will halt, single-step, continue, pause again, and stop its session. The CLI additionally requires `--authorize-run` for each halt/step/continue. Breakpoint insertion/removal likewise requires `authorize_breakpoints: true` in the HIL file and `--authorize` on each CLI command. Do not enable either option with firmware that may control actuators or safety-relevant outputs. The recorded run below exercised this source-level HIL flow on one candidate; it does not establish support for other probes, targets or software versions.
+
+
+## Authorized `edbg` GDB/MI validation (2026-11-05)
+
+- Tested candidate `985402eab11fe33b68269000b306af92bdccb5d8` on Linux, with WCH-Link `1a86:8012`, OpenOCD 0.12.0 and GDB 17.1. The existing CubeMX sample ELF SHA-256 was `0f32ad9bf5191723655d8a48f0ed896c4e0601507d36855279be63c464e216fb`. The MI trace used a stdio logging proxy around `/usr/bin/gdb-multiarch`.
+- `edbg` connected with the existing CMSIS-DAP and STM32H7 OpenOCD scripts and the `examine-end` override shown above. It read registers, backtrace and `edbg_sample_ticks`; inserted and actually hit `HAL_GetTick`, removed the breakpoint, stepped, continued, halted, resumed and stopped the session. The target was resumed after the separate HIL-runner test.
+- The opt-in `tests/hardware/test_hardware_opt_in.py` run passed (1 test) with explicitly authorized run control and breakpoint operations. Actual command/JSON output, raw MI trace, OpenOCD manager logs, ELF hash and tool versions are retained in the local ignored `.local-hardware-tests/review-hil/` directory. These files are local evidence, not packaged release artifacts.
+- This verifies only the named candidate, fixture and commands. A later source change or release candidate needs its own checks; CI and the test above do not prove other OS/adapter/target combinations.

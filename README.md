@@ -9,11 +9,11 @@ npx skills add tangsangsimida/embedded-debug-skill --skill embedded-debug -a cod
 npx skills add tangsangsimida/embedded-debug-skill --skill embedded-debug -a claude-code -g -y
 ```
 
-Requirements: Python 3.11+ for the CLI. Hardware operations additionally require user-installed OpenOCD, a GDB matching the target architecture, and a working project debug setup. Skill installation does not install or modify system toolchains. The current development candidate is not a stable release. `edbg doctor` works even if the embedded toolchain is missing. CI uses Python 3.11 as its compatibility baseline across multiple Linux, Windows, and macOS releases and x64/arm64 runners. A local STM32H743/WCH-Link hardware smoke test passed via OpenOCD directly; EmbeddedDebug CLI/GDB-MI hardware integration remains unvalidated.
+Requirements: Python 3.11+ for the CLI. Hardware operations additionally require user-installed OpenOCD, a GDB matching the target architecture, and a working project debug setup. Skill installation does not install or modify system toolchains. The current development candidate is not a stable release. `edbg doctor` works even if the embedded toolchain is missing. CI uses Python 3.11 as its compatibility baseline across multiple Linux, Windows, and macOS releases and x64/arm64 runners. A local STM32H743/WCH-Link test passed through the EmbeddedDebug CLI and GDB/MI for the recorded candidate; see the [fixture evidence](docs/hardware-test-platform.md).
 
 | Platform | Python 3.11 CLI + Mock CI runners | USB adapter / physical MCU |
 |---|---|---|
-| Linux x64 | Ubuntu 24.04, 26.04 | STM32H743/WCH-Link OpenOCD smoke passed; `edbg` GDB/MI not validated |
+| Linux x64 | Ubuntu 24.04, 26.04 | STM32H743/WCH-Link `edbg` GDB/MI test passed on one recorded candidate |
 | Linux arm64 | Ubuntu 24.04 | Not hardware validated |
 | Windows x64 | Server 2022, Server 2025 | Not hardware validated |
 | Windows arm64 | Windows 11 arm64 | Not hardware validated |
@@ -35,7 +35,7 @@ Ask your agent: “Use EmbeddedDebug Skill to inspect my OpenOCD environment and
 - Generic GDB controller primitives for target selection, architecture/register discovery, expression reads, stack frames, breakpoints, thread selection, and run-state tracking.
 - Agent Skill metadata and resource validation. Skills CLI repository-install tests are an explicit release gate.
 
-This is a candidate build; no stable Release is claimed. A direct OpenOCD smoke test on STM32H743 passed, but it did not exercise the EmbeddedDebug CLI/GDB-MI backend. See [Validation status and roadmap](#validation-status-and-roadmap) for known limits.
+This is a candidate build; no stable Release is claimed. The STM32H743 fixture has also been tested through the EmbeddedDebug CLI and GDB/MI on a recorded candidate. See [Validation status and roadmap](#validation-status-and-roadmap) for known limits.
 
 ## Architecture
 
@@ -163,7 +163,7 @@ Read-only inspection is the default. Pausing/resuming/stepping and adding/removi
 
 ## Validation status and roadmap
 
-The v0.1.0 minimum scope is project/tool discovery, GDB-verified OpenOCD connections, persistent GDB/MI inspection and guarded run control, system-first environment diagnostics, and validated Codex/Claude Skills installation. Advanced HardFault, RTOS/ThreadX, SVD, and telemetry diagnostics are roadmap items, not release blockers or current support claims. The STM32H743 fixture has passed a direct OpenOCD flash/verify/run check and the user observed PC13 LED blinking. The opt-in HIL test through `edbg` and its GDB/MI backend has not yet been run on physical hardware.
+The v0.1.0 minimum scope is project/tool discovery, GDB-verified OpenOCD connections, persistent GDB/MI inspection and guarded run control, system-first environment diagnostics, and validated Codex/Claude Skills installation. Advanced HardFault, RTOS/ThreadX, SVD, and telemetry diagnostics are roadmap items, not release blockers or current support claims. The STM32H743 fixture has passed a direct OpenOCD flash/verify/run check and the user observed PC13 LED blinking. The opt-in HIL runner and a source-level GDB/MI sequence passed on the recorded STM32H743 candidate; see [fixture evidence](docs/hardware-test-platform.md).
 
 Daily PR CI keeps one Python 3.11 runner per OS family (Linux, Windows, macOS); a quick Ubuntu smoke installs the Skill for both Codex and Claude Code. The complete nine-platform × two-agent Skills CLI matrix runs nightly and on demand. Formal release validation also tests the exact release wheel across that full matrix before applying the stable-release gate. Stable Release is blocked by `release-readiness.toml` until the physical candidate HIL evidence and exact artifact install gates pass. Hardware tests require explicit opt-in and a user-supplied config and are skipped by default.
 
