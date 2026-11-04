@@ -1,0 +1,32 @@
+{
+  "fixture_kind": "golden-contract",
+  "cases": [
+    {
+      "case_id": "hardfault-invalid-stack",
+      "problem_type": "hardfault",
+      "expected_root_cause": "invalid-stack-pointer",
+      "required_phases": ["understand", "discover", "plan", "execute", "verify", "report"],
+      "required_operations": ["discover", "status", "registers", "backtrace"]
+    },
+    {
+      "case_id": "hang-lock-wait",
+      "problem_type": "hang",
+      "expected_root_cause": "lock-wait",
+      "required_phases": ["understand", "discover", "plan", "execute", "verify", "report"],
+      "required_operations": ["status", "backtrace", "sample-again"]
+    },
+    {
+      "case_id": "variable-unit-conversion",
+      "problem_type": "variable",
+      "expected_root_cause": "unit-conversion-error",
+      "required_operations": ["discover", "variable-read", "source-analysis", "regression-test"]
+    },
+    {
+      "case_id": "missing-gdb-recovery",
+      "problem_type": "environment",
+      "expected_root_cause": "missing-gdb",
+      "required_phases": ["understand", "discover", "plan", "execute", "verify", "report"],
+      "required_operations": ["doctor", "environment-inspect", "environment-plan", "recheck"]
+    }
+  ]
+}

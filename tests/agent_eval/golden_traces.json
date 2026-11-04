@@ -1,0 +1,67 @@
+{
+  "fixture_kind": "golden-contract",
+  "traces": {
+    "hardfault-invalid-stack": {
+      "phases": ["understand", "discover", "plan", "execute", "verify", "report"],
+      "evidence": [{"id": "hf-regs"}, {"id": "hf-stack"}],
+      "operations": [
+        {"name": "registers", "side_effect": "none", "authorization": "none", "evidence_ids": ["hf-regs"]},
+        {"name": "backtrace", "side_effect": "none", "authorization": "none", "evidence_ids": ["hf-stack"]}
+      ],
+      "root_cause": {"label": "invalid-stack-pointer", "confidence": "confirmed", "evidence_ids": ["hf-regs", "hf-stack"]},
+      "report": {"problem": "HardFault", "root_cause": "invalid stack pointer", "validation": "fault frame reproduced", "final_target_state": "halted"},
+      "regression_passed": false,
+      "session_recovery": true,
+      "human_interventions": 1,
+      "authorizations": 0,
+      "operation_failures": 0
+    },
+    "hang-lock-wait": {
+      "phases": ["understand", "discover", "plan", "execute", "verify", "report"],
+      "evidence": [{"id": "hang-a"}, {"id": "hang-b"}],
+      "operations": [
+        {"name": "status", "side_effect": "none", "authorization": "none", "evidence_ids": ["hang-a"]},
+        {"name": "sample-again", "side_effect": "run", "authorization": "run", "evidence_ids": ["hang-b"]}
+      ],
+      "root_cause": {"label": "lock-wait", "confidence": "confirmed", "evidence_ids": ["hang-a", "hang-b"]},
+      "report": {"problem": "hang", "root_cause": "lock wait", "validation": "two samples match", "final_target_state": "halted"},
+      "regression_passed": true,
+      "session_recovery": true,
+      "human_interventions": 1,
+      "authorizations": 1,
+      "operation_failures": 0
+    },
+    "variable-unit-conversion": {
+      "phases": ["understand", "discover", "plan", "execute", "verify", "fix", "report"],
+      "evidence": [{"id": "var-value"}, {"id": "source-diff"}, {"id": "test"}],
+      "operations": [
+        {"name": "variable-read", "side_effect": "none", "authorization": "none", "evidence_ids": ["var-value"]},
+        {"name": "source-analysis", "side_effect": "none", "authorization": "none", "evidence_ids": ["source-diff"]},
+        {"name": "regression-test", "side_effect": "none", "authorization": "none", "evidence_ids": ["test"]}
+      ],
+      "root_cause": {"label": "unit-conversion-error", "confidence": "confirmed", "evidence_ids": ["var-value", "source-diff", "test"]},
+      "report": {"problem": "wrong ADC value", "root_cause": "unit conversion", "validation": "software test passed", "final_target_state": "disconnected"},
+      "regression_passed": true,
+      "session_recovery": true,
+      "human_interventions": 0,
+      "authorizations": 0,
+      "operation_failures": 0
+    },
+    "missing-gdb-recovery": {
+      "phases": ["understand", "discover", "plan", "execute", "verify", "report"],
+      "evidence": [{"id": "doctor"}, {"id": "plan"}, {"id": "recheck"}],
+      "operations": [
+        {"name": "doctor", "side_effect": "none", "authorization": "none", "evidence_ids": ["doctor"]},
+        {"name": "environment-plan", "side_effect": "none", "authorization": "none", "evidence_ids": ["plan"]},
+        {"name": "recheck", "side_effect": "none", "authorization": "none", "evidence_ids": ["recheck"]}
+      ],
+      "root_cause": {"label": "missing-gdb", "confidence": "confirmed", "evidence_ids": ["doctor", "plan"]},
+      "report": {"problem": "GDB unavailable", "root_cause": "missing GDB", "validation": "environment rechecked", "final_target_state": "disconnected"},
+      "regression_passed": false,
+      "session_recovery": true,
+      "human_interventions": 0,
+      "authorizations": 0,
+      "operation_failures": 1
+    }
+  }
+}
