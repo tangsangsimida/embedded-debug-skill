@@ -26,10 +26,14 @@ def authorize_operation(
     *,
     authorized_run: bool = False,
     authorized: bool = False,
+    authorized_expression: bool = False,
 ) -> None:
     """Enforce and audit one target-affecting operation from the shared policy."""
     require_operation_authorized(
-        operation, authorized_run=authorized_run, authorized=authorized
+        operation,
+        authorized_run=authorized_run,
+        authorized=authorized,
+        authorized_expression=authorized_expression,
     )
     if requires_authorization(operation):
         audit(operation, target)

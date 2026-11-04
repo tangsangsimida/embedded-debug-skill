@@ -13,6 +13,11 @@ AUTHORIZATION_POLICIES: dict[str, tuple[str, str, str]] = {
     "reset": ("target", "reset", "--authorize"),
     "memory-write": ("target", "memory-write", "--authorize"),
     "flash": ("target", "flash", "--authorize"),
+    "variable-evaluate": (
+        "expression",
+        "Evaluating an arbitrary GDB expression (may execute code or modify target state)",
+        "--authorize-expression",
+    ),
 }
 
 
@@ -26,11 +31,22 @@ def requires_authorization(operation: str) -> bool:
 
 
 def require_operation_authorized(
-    operation: str, *, authorized_run: bool = False, authorized: bool = False
+    operation: str,
+    *,
+    authorized_run: bool = False,
+    authorized: bool = False,
+    authorized_expression: bool = False,
 ) -> None:
     """Apply the shared policy for target-affecting GDB operations."""
     policy = AUTHORIZATION_POLICIES.get(operation)
     if policy is None:
         return
     kind, action, flag = policy
-    require_authorized(action, authorized_run if kind == "run" else authorized, flag)
+    approved = (
+        authorized_run
+        if kind == "run"
+        else authorized_expression
+        if kind == "expression"
+        else authorized
+    )
+    require_authorized(action, approved, flag)

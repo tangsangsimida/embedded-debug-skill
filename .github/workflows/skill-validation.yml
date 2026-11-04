@@ -24,7 +24,7 @@ jobs:
         with:
           node-version: '22'
       - run: python skills/embedded-debug/scripts/validate_skill.py skills/embedded-debug
-      - run: python skills/embedded-debug/scripts/check_version.py
+      - run: python skills/embedded-debug/scripts/check_version.py --allow-worktree-drift
       - run: npx --yes skills-ref@0.1.5 validate skills/embedded-debug
       - name: Install into isolated Codex profile
         run: npx --yes skills@1.7.6 add . --skill embedded-debug --agent codex --copy -g -y

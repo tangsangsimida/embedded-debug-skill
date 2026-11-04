@@ -10,6 +10,10 @@ from .mi_transport import MITransport
 
 
 class GDBController:
+    _VARIABLE_PATH = re.compile(
+        r"[A-Za-z_][A-Za-z0-9_]*(?:(?:\.|::)[A-Za-z_][A-Za-z0-9_]*)*\Z"
+    )
+
     def __init__(self, transport: MITransport) -> None:
         self.mi = transport
         self.architecture: str | None = None
@@ -71,7 +75,13 @@ class GDBController:
             for item in values
         ]
 
-    def variable_read(self, expression: str) -> Any:
+    def variable_read(self, expression: str, *, allow_arbitrary: bool = False) -> Any:
+        if not allow_arbitrary and not is_simple_variable_path(expression):
+            raise ValueError(
+                "variable read accepts only a simple identifier path such as "
+                "motor_speed or controller.pid.kp; arbitrary GDB expressions "
+                "require --authorize-expression"
+            )
         result = self.mi.command(f"-data-evaluate-expression {mi_quote(expression)}")
         return (result.results or {}).get("value")
 
@@ -105,3 +115,8 @@ def mi_quote(value: str) -> str:
         .replace("\t", "\\t")
     )
     return f'"{escaped}"'
+
+
+def is_simple_variable_path(expression: str) -> bool:
+    """Return whether text is a side-effect-free identifier/member path."""
+    return GDBController._VARIABLE_PATH.fullmatch(expression) is not None

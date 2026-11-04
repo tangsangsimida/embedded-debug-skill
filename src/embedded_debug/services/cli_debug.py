@@ -8,6 +8,7 @@ from typing import Any
 
 from ..config import ProjectConfig
 from ..discovery import discover_project
+from ..gdb.controller import is_simple_variable_path
 from ..gdb.mi_transport import GDBError
 from ..models import Envelope
 from ..openocd.manager import OpenOCDError, OpenOCDManager
@@ -86,6 +87,7 @@ def handle_debug_command(
         "breakpoint-add",
         "breakpoint-remove",
         "variable-read",
+        "variable-evaluate",
         "memory-read",
         "memory-write",
         "flash",
@@ -103,11 +105,19 @@ def handle_debug_command(
             audit_target = args.location
         elif name == "breakpoint-remove":
             audit_target = str(args.number)
+        expression = str(args.expression) if name == "variable-read" else ""
+        arbitrary_expression = name == "variable-read" and not is_simple_variable_path(
+            expression
+        )
+        operation = "variable-evaluate" if arbitrary_expression else name
+        if arbitrary_expression:
+            audit_target = expression
         authorize_operation(
-            name,
+            operation,
             audit_target,
             authorized_run=bool(getattr(args, "authorize_run", False)),
             authorized=bool(getattr(args, "authorize", False)),
+            authorized_expression=bool(getattr(args, "authorize_expression", False)),
         )
         if name == "flash":
             project_root = cfg.config_path.parent if cfg.config_path else Path.cwd()
@@ -211,7 +221,9 @@ def handle_debug_command(
                 or args.value >= 1 << (8 * args.length)
             ):
                 raise ValueError("memory write value must fit a 1..8 byte length")
-        response = session_operation(name, **params)
+        if arbitrary_expression:
+            params["authorized_expression"] = True
+        response = session_operation(operation, **params)
         response_data = response.get("data")
         target_info = response.get("target", {})
         target_state = response.get("target_state", "unknown")
