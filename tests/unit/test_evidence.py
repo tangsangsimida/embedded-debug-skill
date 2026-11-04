@@ -39,8 +39,10 @@ def test_evidence_writer_does_not_infer_expression_authorization(monkeypatch, tm
     assert record["authorization"] == "unknown"
 
 
-def test_evidence_write_failure_does_not_change_operation(monkeypatch, capsys) -> None:
-    monkeypatch.setenv("EDBG_EVIDENCE_FILE", "/dev/null/impossible/trace.jsonl")
+def test_evidence_write_failure_does_not_change_operation(monkeypatch, capsys, tmp_path) -> None:
+    parent_file = tmp_path / "not-a-directory"
+    parent_file.write_text("occupied", encoding="utf-8")
+    monkeypatch.setenv("EDBG_EVIDENCE_FILE", str(parent_file / "trace.jsonl"))
 
     append_evidence(Envelope("status", True, target_state="halted"))
 
