@@ -42,6 +42,18 @@ def test_hardfault_decoder_preserves_unknown_architecture_and_missing_frame() ->
     assert result["limitations"]
 
 
+def test_hardfault_decoder_uses_gdb_frame_architecture_when_top_level_is_auto() -> None:
+    snapshot = _snapshot()
+    snapshot["architecture"] = "auto"
+    snapshot["backtrace"] = [{"frame": {"arch": "armv7e-m"}}]
+
+    result = analyze_snapshot(snapshot)
+
+    assert result["status"] == "analyzed"
+    assert result["architecture"] == "armv7e-m"
+    assert result["architecture_source"] == "backtrace"
+
+
 def test_hardfault_cli_snapshot_envelope_is_supported(tmp_path) -> None:
     path = tmp_path / "snapshot.json"
     path.write_text(json.dumps({"data": _snapshot()}), encoding="utf-8")
