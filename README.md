@@ -78,7 +78,7 @@ edbg discover --json
 edbg doctor --json
 edbg environment inspect --json
 edbg environment plan --json
-edbg --session bench-a connect --elf build/firmware.elf
+edbg --session bench-a connect --authorize-openocd-config --elf build/firmware.elf
 edbg --session bench-a registers --json
 ```
 
@@ -86,6 +86,7 @@ Discovery checks existing VS Code launch/tasks, OpenOCD command arguments, CMake
 
 ```sh
 edbg --json connect \
+  --authorize-openocd-config \
   --interface interface/cmsis-dap.cfg \
   --target target/your-target.cfg \
   --elf build/firmware.elf
@@ -95,10 +96,11 @@ Or use a complete OpenOCD config and a different GDB executable:
 
 ```sh
 edbg --json --gdb /path/to/gdb --openocd /path/to/openocd connect \
+  --authorize-openocd-config \
   --openocd-config debug/openocd.cfg --elf build/firmware.elf
 ```
 
-A complete config can also contain adapter, target, board, flash driver, and initialization commands. The CLI defaults to `127.0.0.1`, and rejects non-loopback binds. If no local GDB Server is listening, it starts OpenOCD only from the project's discovered or explicitly supplied configuration.
+A complete config can also contain adapter, target, board, flash driver, and initialization commands. OpenOCD configurations are executable Tcl; review the entire configuration and any sourced scripts, then pass `--authorize-openocd-config` to start a new server. The CLI uses a loopback bind and checks the owned process's TCP listeners at startup. This check is not a sandbox: trusted Tcl may expose a listener before the check or change it later. Existing external servers are outside that check. See [configuration](docs/configuration.md).
 
 ## Environment and configuration
 

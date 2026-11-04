@@ -82,6 +82,7 @@ def parser() -> argparse.ArgumentParser:
     connect.add_argument("--board")
     connect.add_argument("--openocd-config")
     connect.add_argument("--openocd-command", action="append", default=[])
+    connect.add_argument("--authorize-openocd-config", action="store_true")
     connect.add_argument("--elf", type=Path)
     connect.add_argument("--host")
     connect.add_argument("--gdb-port", type=int)
@@ -134,6 +135,9 @@ def parser() -> argparse.ArgumentParser:
     flash.add_argument("--authorize", action="store_true")
     flash.add_argument("--authorize-command", action="store_true")
     flash.add_argument("--elf", type=Path)
+    flash.add_argument(
+        "--task-timeout", type=float, default=300.0, help="flash task timeout in seconds"
+    )
     for action_name in ("halt", "continue", "step", "next"):
         command_parsers[action_name].add_argument(
             "--authorize-run",
@@ -145,6 +149,9 @@ def parser() -> argparse.ArgumentParser:
             ),
         )
     build = command_parser("build")
+    build.add_argument(
+        "--task-timeout", type=float, default=900.0, help="build task timeout in seconds"
+    )
     build.add_argument("--authorize-run", action="store_true")
     build.add_argument(
         "--authorize-command",
@@ -227,6 +234,7 @@ def parser() -> argparse.ArgumentParser:
         ("--board", {}),
         ("--openocd-config", {}),
         ("--openocd-command", {"action": "append", "default": []}),
+        ("--authorize-openocd-config", {"action": "store_true"}),
         ("--elf", {"type": Path}),
         ("--host", {}),
         ("--gdb-port", {"type": int}),

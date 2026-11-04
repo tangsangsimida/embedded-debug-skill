@@ -24,6 +24,9 @@ class GDBController:
         self, host: str = "127.0.0.1", port: int = 3333, elf: str | None = None
     ) -> dict[str, Any]:
         self.mi.start(elf)
+        # In synchronous MI mode GDB cannot process -exec-interrupt while the
+        # inferior is running. Require asynchronous command processing.
+        self.mi.command("-gdb-set mi-async on")
         self.mi.command(f"-target-select remote {host}:{port}", timeout=30)
         # target-select does not guarantee a halted state; async stop records update it.
         self.detect_capabilities()

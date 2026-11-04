@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 import sys
 from pathlib import Path
 
@@ -47,3 +48,19 @@ def test_launcher_respects_explicit_cache_override(monkeypatch, tmp_path) -> Non
     launcher = load_launcher()
     monkeypatch.setenv("EDBG_CACHE_HOME", str(tmp_path / "override"))
     assert str(launcher._cached_cli()).startswith(str(tmp_path / "override"))
+
+
+def test_launcher_falls_back_from_mismatched_path_to_matching_cache(monkeypatch, tmp_path) -> None:
+    launcher = load_launcher()
+    cached = tmp_path / "edbg"
+    cached.touch()
+    monkeypatch.setattr(
+        launcher.shutil, "which", lambda name: "/old/edbg" if name == "edbg" else None
+    )
+    monkeypatch.setattr(launcher, "_cached_cli", lambda: cached)
+    monkeypatch.setattr(launcher, "_matches_build_info", lambda cmd: cmd == [str(cached)])
+    monkeypatch.setattr(launcher, "_run_cached", lambda cli, args: 17)
+    monkeypatch.setattr(
+        launcher.subprocess, "run", lambda *a, **kw: subprocess.CompletedProcess(a[0], 0, "old", "")
+    )
+    assert launcher.main(["doctor"]) == 17

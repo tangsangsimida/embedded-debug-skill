@@ -34,6 +34,19 @@ class BasePlatform:
     name = "unknown"
 
     @staticmethod
+    def tcp_listeners(pid: int) -> list[tuple[str, int]]:
+        """Return owned listening TCP addresses, or fail if they cannot be inspected."""
+        try:
+            connections = psutil.Process(pid).net_connections(kind="tcp")
+            return [
+                (item.laddr.ip, item.laddr.port)
+                for item in connections
+                if item.status == psutil.CONN_LISTEN
+            ]
+        except (psutil.Error, OSError) as exc:
+            raise RuntimeError(f"Could not inspect process listeners: {exc}") from exc
+
+    @staticmethod
     def create_ipc_server() -> tuple[socket.socket, dict[str, object]]:
         """Create an authenticated endpoint bound only to the local IPv4 loopback."""
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

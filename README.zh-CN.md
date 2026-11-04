@@ -47,7 +47,7 @@ Skills CLI 只负责安装 Skill 文件，不会安装 Python CLI、GDB、OpenOC
 ```sh
 edbg discover --json
 edbg doctor --json
-edbg --session bench-a session start
+edbg --session bench-a session start --authorize-openocd-config
 edbg --session bench-a registers --json
 edbg registers --json
 edbg backtrace --json
@@ -59,6 +59,7 @@ edbg session stop
 
 ```sh
 edbg --json connect \
+  --authorize-openocd-config \
   --interface interface/cmsis-dap.cfg \
   --target target/your-target.cfg \
   --elf build/firmware.elf
@@ -68,10 +69,11 @@ edbg --json connect \
 
 ```sh
 edbg --json --gdb /path/to/gdb --openocd /path/to/openocd connect \
+  --authorize-openocd-config \
   --openocd-config debug/openocd.cfg --elf build/firmware.elf
 ```
 
-默认只绑定 loopback，避免意外暴露调试端口。使用 `edbg doctor --json` 检查工具及版本；缺失的可选工具只影响依赖它的具体操作。
+OpenOCD 配置及其引用的脚本是可执行 Tcl。启动新服务前须审查全部配置并授权 `--authorize-openocd-config`。程序设置 loopback 并在启动时检查所属进程的 TCP 监听地址；这不是沙箱，已授权 Tcl 仍可能在检查前或之后暴露监听，也可能启动其他进程。外部已有服务不在该检查范围内。使用 `edbg doctor --json` 检查工具及版本；缺失的可选工具只影响依赖它的具体操作。
 
 ## 目标适配
 

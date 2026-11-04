@@ -26,6 +26,20 @@ def test_guarded_memory_write_refuses_without_authorization(capsys) -> None:
     assert data["error"]["code"] == "AUTHORIZATION_REQUIRED"
 
 
+def test_connect_requires_authorization_before_executing_workspace_tcl(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setattr(
+        "embedded_debug.services.cli_sessions.OpenOCDManager.port_open", lambda *a: False
+    )
+    config = tmp_path / "openocd.cfg"
+    config.write_text("echo ok; bindto 0.0.0.0\n", encoding="utf-8")
+    assert run(["--json", "connect", "--openocd-config", str(config)]) == 2
+    result = json.loads(capsys.readouterr().out)
+    assert result["error"]["code"] == "AUTHORIZATION_REQUIRED"
+
+
 def test_nested_command_syntax(capsys) -> None:
     assert run(["config", "validate", "--json"]) == 0
     data = json.loads(capsys.readouterr().out)
@@ -201,6 +215,7 @@ def test_connect_uses_swappable_openocd_configs_without_source_edits(
                     "--openocd",
                     str(fake_openocd),
                     "connect",
+                    "--authorize-openocd-config",
                     "--interface",
                     interface,
                     "--target",

@@ -3,12 +3,24 @@
 from __future__ import annotations
 
 import json
+import math
 import subprocess
 import sys
+import tempfile
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from ..models import Envelope
+from ..platforms import get_platform
+
+
+@dataclass
+class ExternalResult:
+    returncode: int
+    stdout: str
+    stderr: str
+    timed_out: bool = False
 
 
 def emit(envelope: Envelope, as_json: bool) -> None:
@@ -27,18 +39,35 @@ def emit(envelope: Envelope, as_json: bool) -> None:
         print(diagnostic, file=sys.stderr if not envelope.success else sys.stdout)
 
 
-def run_external(
-    argv: Sequence[str], cwd: Path, as_json: bool
-) -> subprocess.CompletedProcess[str]:
-    result = subprocess.run(
-        argv,
-        cwd=cwd,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-    )
+def run_external(argv: Sequence[str], cwd: Path, as_json: bool, timeout: float) -> ExternalResult:
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError("External command timeout must be a finite positive number")
+    with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
+        process = subprocess.Popen(
+            argv,
+            cwd=cwd,
+            stdout=stdout_file,
+            stderr=stderr_file,
+            **get_platform().creation_options(),
+        )
+        identity = get_platform().process_identity(process.pid)
+        timed_out = False
+        try:
+            process.wait(timeout=timeout)
+        except (subprocess.TimeoutExpired, KeyboardInterrupt) as exc:
+            if identity is not None:
+                get_platform().terminate_process_tree(process.pid, expected_identity=identity)
+            if process.poll() is None:
+                process.kill()
+            process.wait()
+            if isinstance(exc, KeyboardInterrupt):
+                raise
+            timed_out = True
+        stdout_file.seek(0)
+        stderr_file.seek(0)
+        stdout = stdout_file.read().decode("utf-8", errors="replace")
+        stderr = stderr_file.read().decode("utf-8", errors="replace")
+    result = ExternalResult(process.returncode, stdout, stderr, timed_out)
     if as_json:
         for stream in (result.stdout, result.stderr):
             if stream:

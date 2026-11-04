@@ -32,6 +32,46 @@ def test_command_timeout_and_cleanup() -> None:
     assert transport.state == "disconnected"
 
 
+def test_interrupt_result_alone_does_not_confirm_stop(monkeypatch) -> None:
+    monkeypatch.setenv("EDBG_FAKE_GDB_NO_STOP", "1")
+    transport = MITransport(str(MOCK_GDB), timeout=1)
+    try:
+        transport.start()
+        transport.state = "running"
+        transport.command("-exec-interrupt --all")
+        assert not transport.wait_for_state("halted", 0.05)
+        assert transport.state == "running"
+    finally:
+        transport.close()
+
+
+def test_async_flood_is_bounded_and_does_not_block_results() -> None:
+    transport = MITransport(str(MOCK_GDB), timeout=5)
+    try:
+        transport.start()
+        transport.command("-test-flood")
+        assert len(transport.async_records) == 500
+        assert transport.async_records_dropped == 4500
+        assert transport._records.empty()
+        assert transport.command("-gdb-show architecture").results["value"] == "arm"
+    finally:
+        transport.close()
+
+
+def test_late_result_is_discarded_after_timeout() -> None:
+    transport = MITransport(str(MOCK_GDB), timeout=1)
+    try:
+        transport.start()
+        with pytest.raises(GDBTimeout):
+            transport.command('-data-evaluate-expression "slow"', timeout=0.05)
+        result = transport.command('-data-evaluate-expression "fast"')
+        assert result.results["value"] == "7"
+        assert transport.unmatched_results_dropped == 1
+        assert transport._records.empty()
+    finally:
+        transport.close()
+
+
 def test_reconnect_restarts_debugger_process() -> None:
     transport = MITransport(str(MOCK_GDB), timeout=1)
     transport.start()

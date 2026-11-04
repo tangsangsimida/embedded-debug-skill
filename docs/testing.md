@@ -2,7 +2,7 @@
 
 ## Shared checks
 
-The CI baseline is Python 3.11. Daily PR/master CI uses one representative runner for each OS family (`ubuntu-24.04`, `windows-2022`, and `macos-15`) and runs Ruff, mypy, the complete pytest suite, wheel/sdist build, `pip check`, and `pip-audit`. The suite exercises Mock GDB/MI, Mock OpenOCD, persistent-session IPC, timeout/recovery behavior, JSON CLI output, and authorization checks.
+The CI baseline is Python 3.11. PR/master CI tests Python 3.11, 3.12, and 3.13 on each OS family (`ubuntu-24.04`, `windows-2022`, and `macos-15`) and runs Ruff, mypy, the complete pytest suite, wheel/sdist build, `pip check`, and `pip-audit`. The suite exercises Mock GDB/MI, Mock OpenOCD, persistent-session IPC, timeout/recovery behavior, JSON CLI output, and authorization checks.
 
 `skill-install-test.yml` runs a quick Ubuntu installation smoke for Codex and Claude Code on each PR/master push. Its full nine-platform-by-two-agent matrix runs nightly at 02:17 UTC and on `workflow_dispatch`. Both paths verify the installed Skill resources, install the CLI/package, check `--version`, `--help`, and `doctor`, and run the Mock test suite. Formal releases separately run the same full matrix against the exact candidate wheel through `release-gate-reusable.yml`. These checks verify installation and command contracts; they do not verify that a live language model triggers a Skill from natural language.
 

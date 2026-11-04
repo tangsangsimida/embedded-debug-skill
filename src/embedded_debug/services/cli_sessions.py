@@ -92,6 +92,13 @@ def handle_session_command(
         if args.gdb_timeout is not None and args.gdb_timeout <= 0:
             raise ValueError("--gdb-timeout must be a positive number")
         settings = connection_settings(args, cfg, allow_connect_options=True)
+        if not OpenOCDManager.port_open(settings["host"], settings["gdb_port"]):
+            require_authorized(
+                "Starting OpenOCD executes the configured Tcl scripts",
+                settings["trusted_config"],
+                "--authorize-openocd-config after reviewing all scripts and commands",
+            )
+            audit("openocd-config-authorized", f"{settings['host']}:{settings['gdb_port']}")
         if settings["host"] not in {"127.0.0.1", "localhost", "::1"}:
             raise ValueError("Only loopback OpenOCD connections are allowed by default")
         if not OpenOCDManager.port_open(settings["host"], settings["gdb_port"]) and not any(
