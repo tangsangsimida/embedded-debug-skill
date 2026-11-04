@@ -11,7 +11,13 @@ from ..build_info import build_info
 from ..config import ProjectConfig
 from ..discovery import discover_project
 from ..doctor import doctor
-from ..environment import inspect_environment, install_user_cli, remediation_plan
+from ..environment import (
+    inspect_environment,
+    install_user_cli,
+    remediation_plan,
+    repair_user_path,
+    rollback_user_path,
+)
 from ..models import Envelope
 from ..safety import require_authorized
 from .audit import audit
@@ -41,6 +47,20 @@ def handle_environment_command(
         require_authorized("Installing the Python CLI", args.authorize)
         audit("install-python-cli", f"version={__version__}")
         result = install_user_cli(args.source, authorized=True)
+        emit(Envelope(name, True, data=result), args.json)
+        return 0
+    if name == "environment-path-add":
+        result = repair_user_path(
+            args.directory, shell=args.shell, authorized=bool(args.authorize)
+        )
+        if result["changed"]:
+            audit("user-path-add", f"{result['shell']}:{result['directory']}")
+        emit(Envelope(name, True, data=result), args.json)
+        return 0
+    if name == "environment-path-remove":
+        result = rollback_user_path(shell=args.shell, authorized=bool(args.authorize))
+        if result["changed"]:
+            audit("user-path-remove", f"{result['shell']}:{result['file']}")
         emit(Envelope(name, True, data=result), args.json)
         return 0
     if name == "doctor":

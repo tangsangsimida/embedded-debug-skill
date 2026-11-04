@@ -25,7 +25,7 @@ Ask your agent: “Use EmbeddedDebug Skill to inspect my OpenOCD environment and
 ## Current implementation
 
 - System-first PATH discovery and version checks with bounded subprocess timeouts.
-- Independent environment inspection and non-mutating remediation plans; an explicitly authorized Python CLI install uses a versioned user cache and never changes system tools or shell startup files.
+- Independent environment inspection and non-mutating remediation plans; optional PATH repair is limited to an explicitly authorized, reversible block in the current user's Bash, Zsh, or fish startup file. Python CLI installs use a versioned user cache and never change system tools.
 - Optional strict project TOML overrides and loopback-only OpenOCD default.
 - OpenOCD process management, config file composition, port reuse detection, logging, and cleanup.
 - Project discovery for existing VS Code launch/tasks, OpenOCD arguments, build commands, and ELF outputs. A standalone target file and `.edbg.toml` are not required if existing project settings define the path.
@@ -102,7 +102,7 @@ A complete config can also contain adapter, target, board, flash driver, and ini
 
 ## Environment and configuration
 
-Use `edbg doctor --json` to inspect Python, ARM GCC, ARM GDB, OpenOCD, objcopy, size, and discovered project settings. GDB/OpenOCD are optional until a connected operation needs them. `--verbose` includes executable names. Explicit CLI paths override optional TOML, which overrides PATH discovery. Missing tools produce diagnostics; no downloads or environment modifications occur. Doctor prints only a PATH suggestion: Bash/Zsh use `export PATH="/your/toolchain/bin:$PATH"`, fish uses `fish_add_path /your/toolchain/bin`, PowerShell uses `$env:Path = "C:\\toolchain\\bin;$env:Path"`, and CMD uses `set "PATH=C:\\toolchain\\bin;%PATH%"`. Replace the illustrative directory with the actual toolchain location.
+Use `edbg doctor --json` to inspect Python, ARM GCC, ARM GDB, OpenOCD, objcopy, size, and discovered project settings. GDB/OpenOCD are optional until a connected operation needs them. `--verbose` includes executable names. Explicit CLI paths override optional TOML, which overrides PATH discovery. Missing tools produce diagnostics; discovery and planning never modify the environment. To persist a user PATH entry, review the exact existing tool directory and run `edbg environment path-add --directory /your/toolchain/bin --shell fish --authorize`; use `bash` or `zsh` as appropriate. The command changes only a marked block in that user's shell startup file. Roll it back with `edbg environment path-remove --shell fish --authorize`. It does not install system packages or alter system-wide PATH.
 
 TOML configuration is optional and strict. Unknown fields, invalid ports, and non-loopback OpenOCD hosts are rejected. Build commands are argv arrays, not shell strings. Examples in `configs/` are demonstrations only. In particular, `gd32e5-template.toml` makes no claim that a GD32E5 target is supported or that STM32 OpenOCD scripts are interchangeable.
 
