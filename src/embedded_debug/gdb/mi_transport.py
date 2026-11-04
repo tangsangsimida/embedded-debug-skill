@@ -188,8 +188,15 @@ class MITransport:
                 self._pending_token = token
                 while not self._records.empty():
                     self._records.get_nowait()
-            self.process.stdin.write(f"{token}{command}\n")
-            self.process.stdin.flush()
+            try:
+                self.process.stdin.write(f"{token}{command}\n")
+                self.process.stdin.flush()
+            except (OSError, ValueError) as exc:
+                with self._state_changed:
+                    self._pending_token = None
+                    self.state = "disconnected"
+                    self._state_changed.notify_all()
+                raise GDBError(f"Could not send GDB/MI command: {exc}") from exc
             deadline = time.monotonic() + (timeout if timeout is not None else self.timeout)
             while True:
                 remaining = deadline - time.monotonic()
@@ -212,7 +219,10 @@ class MITransport:
                     self.state = "disconnected"
                     raise GDBError(record.text or "GDB exited")
                 if record.kind == "parse-error":
-                    self._pending_token = None
+                    with self._state_changed:
+                        self._pending_token = None
+                        self.state = "unknown"
+                        self._state_changed.notify_all()
                     raise GDBError(record.text or "Invalid GDB/MI output")
                 if record.token == token:
                     with self._state_changed:
@@ -261,12 +271,18 @@ class MITransport:
                     process.stdin.write("-gdb-exit\n")
                     process.stdin.flush()
                 process.wait(timeout=2)
-            except (OSError, subprocess.TimeoutExpired):
-                process.terminate()
+            except (OSError, ValueError, subprocess.TimeoutExpired):
+                try:
+                    process.terminate()
+                except ProcessLookupError:
+                    pass
                 try:
                     process.wait(timeout=2)
                 except subprocess.TimeoutExpired:
-                    process.kill()
+                    try:
+                        process.kill()
+                    except ProcessLookupError:
+                        pass
                     process.wait()
 
     def __enter__(self) -> MITransport:

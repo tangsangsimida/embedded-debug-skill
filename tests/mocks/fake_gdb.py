@@ -78,6 +78,8 @@ for line in sys.stdin:
         emit(f"{token}^done")
         for _ in range(10000):
             emit('=thread-created,id="1"')
+    elif command == "-test-malformed":
+        emit(f'{token}^done,value="unterminated')
     elif command == "-data-list-register-names":
         emit(f'{token}^done,register-names=["r0","pc"]')
     elif command == "-break-list":

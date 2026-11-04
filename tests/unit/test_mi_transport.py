@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from embedded_debug.gdb.controller import GDBController
-from embedded_debug.gdb.mi_transport import GDBTimeout, MITransport
+from embedded_debug.gdb.mi_transport import GDBError, GDBTimeout, MITransport
 
 MOCK_GDB = Path(__file__).parents[1] / "mocks" / "fake_gdb.py"
 
@@ -31,6 +31,32 @@ def test_command_timeout_and_cleanup() -> None:
         transport.command("-hang")
     transport.close()
     assert transport.state == "disconnected"
+
+
+def test_closed_command_pipe_invalidates_prior_halted_state() -> None:
+    transport = MITransport(str(MOCK_GDB), timeout=1)
+    try:
+        transport.start()
+        transport.state = "halted"
+        assert transport.process is not None and transport.process.stdin is not None
+        transport.process.stdin.close()
+        with pytest.raises(GDBError, match="Could not send"):
+            transport.command("-gdb-show architecture")
+        assert transport.state == "disconnected"
+    finally:
+        transport.close()
+
+
+def test_parse_error_invalidates_prior_halted_state() -> None:
+    transport = MITransport(str(MOCK_GDB), timeout=1)
+    try:
+        transport.start()
+        transport.state = "halted"
+        with pytest.raises(GDBError, match="unterminated"):
+            transport.command("-test-malformed")
+        assert transport.state == "unknown"
+    finally:
+        transport.close()
 
 
 def test_interrupt_result_alone_does_not_confirm_stop(monkeypatch) -> None:
