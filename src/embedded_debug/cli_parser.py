@@ -118,6 +118,12 @@ def parser() -> argparse.ArgumentParser:
         "breakpoint-list",
     ):
         child = command_parser(name)
+        if name == "fault-analyze":
+            child.add_argument(
+                "--snapshot",
+                type=Path,
+                help="analyze a saved edbg snapshot JSON without connecting to hardware",
+            )
         if name == "reset":
             child.add_argument("--authorize", action="store_true")
     bp = command_parser("breakpoint-add")

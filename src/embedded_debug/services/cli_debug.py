@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from ..config import ProjectConfig
+from ..diagnostics.hardfault import analyze_snapshot_file
 from ..discovery import discover_project
 from ..gdb.controller import is_simple_variable_path
 from ..gdb.mi_transport import GDBError
@@ -32,6 +33,19 @@ from .output import emit, run_external
 
 
 def handle_debug_command(name: str, args: argparse.Namespace, cfg: ProjectConfig) -> int | None:
+    if name == "fault-analyze" and args.snapshot:
+        result = analyze_snapshot_file(args.snapshot)
+        emit(
+            Envelope(
+                name,
+                True,
+                target_state="disconnected",
+                data=result,
+                diagnostics=result.get("limitations", []),
+            ),
+            args.json,
+        )
+        return 0
     if name == "build":
         require_authorized(
             "Build executes a workspace command",
