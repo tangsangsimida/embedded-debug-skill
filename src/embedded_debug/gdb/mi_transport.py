@@ -56,7 +56,7 @@ class MITransport:
         )
         if elf:
             args.append(str(elf))
-        self.process = subprocess.Popen(
+        process = subprocess.Popen(
             args,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -67,41 +67,53 @@ class MITransport:
             bufsize=1,
             **get_platform().creation_options(),
         )
-        identity = get_platform().process_identity(self.process.pid)
+        self.process = process
+        identity = get_platform().process_identity(process.pid)
         if identity is not None:
             self.process_executable = identity.executable
         self.state = "unknown"
-        self._reader = threading.Thread(target=self._read_stdout, daemon=True)
+        records = self._records
+        self._reader = threading.Thread(
+            target=self._read_stdout, args=(process, records), daemon=True
+        )
         self._reader.start()
-        self._stderr_reader = threading.Thread(target=self._read_stderr, daemon=True)
+        self._stderr_reader = threading.Thread(
+            target=self._read_stderr, args=(process,), daemon=True
+        )
         self._stderr_reader.start()
 
-    def _read_stdout(self) -> None:
-        assert self.process and self.process.stdout
-        for line in self.process.stdout:
+    def _read_stdout(
+        self, process: subprocess.Popen[str], records: queue.Queue[MIRecord]
+    ) -> None:
+        assert process.stdout
+        for line in process.stdout:
             try:
                 record = parse_record(line)
             except ValueError as exc:
-                self._records.put(MIRecord(None, "parse-error", text=str(exc), raw=line))
+                records.put(MIRecord(None, "parse-error", text=str(exc), raw=line))
                 continue
             if record:
-                self._observe_record(record)
-                self._records.put(record)
+                self._observe_record(record, process)
+                records.put(record)
         with self._state_changed:
-            self.state = "disconnected"
-            self._state_changed.notify_all()
-        self._records.put(MIRecord(None, "eof", text="GDB closed stdout"))
+            if self.process is process:
+                self.state = "disconnected"
+                self._state_changed.notify_all()
+        records.put(MIRecord(None, "eof", text="GDB closed stdout"))
 
-    def _read_stderr(self) -> None:
-        process = self.process
-        if process is None or process.stderr is None:
+    def _read_stderr(self, process: subprocess.Popen[str]) -> None:
+        if process.stderr is None:
             return
         for line in process.stderr:
-            self.stderr_tail.append(line.rstrip("\r\n"))
+            with self._state_changed:
+                if self.process is process:
+                    self.stderr_tail.append(line.rstrip("\r\n"))
 
-    def _observe_record(self, record: MIRecord) -> None:
+    def _observe_record(self, record: MIRecord, process: subprocess.Popen[str]) -> None:
         """Keep run state current even when no command is waiting for MI output."""
         with self._state_changed:
+            if self.process is not process:
+                return
             if record.kind in {"exec", "status", "notify"}:
                 self.async_records.append(record)
             if record.kind == "exec" and record.cls == "running":
@@ -186,11 +198,14 @@ class MITransport:
 
     def reconnect(self, elf: str | Path | None = None, extra_args: Sequence[str] = ()) -> None:
         """Restart GDB after a disconnect; the caller must reselect the target."""
-        self.close()
-        self._records = queue.Queue()
-        self.async_records.clear()
-        self.stderr_tail.clear()
-        self.start(elf, extra_args)
+        # Do not replace the process or response queue while a command is still
+        # consuming them. The reader threads below retain their own generations.
+        with self._lock:
+            self.close()
+            self._records = queue.Queue()
+            self.async_records.clear()
+            self.stderr_tail.clear()
+            self.start(elf, extra_args)
 
     def close(self) -> None:
         process, self.process = self.process, None
