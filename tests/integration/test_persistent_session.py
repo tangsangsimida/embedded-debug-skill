@@ -15,7 +15,7 @@ from typing import Any
 import psutil
 import pytest
 
-from embedded_debug.session_manager import SessionManagerError, start_session
+from embedded_debug.session_manager import SessionManagerError, session_operation, start_session
 from embedded_debug.session_store import gdb_identity_matches, process_alive, read_session
 
 MOCKS = Path(__file__).parents[1] / "mocks"
@@ -291,7 +291,7 @@ def test_commands_across_independent_processes_keep_gdb_context(
         assert not denied["success"]
         assert "IPC authentication failed" in denied["error"]
 
-        code, added = _invoke(tmp_path, env, "breakpoint", "add", "main")
+        code, added = _invoke(tmp_path, env, "breakpoint", "add", "main", "--authorize")
         assert code == 0, added
         assert added["data"]["bkpt"]["number"] == "1"
 
@@ -410,6 +410,7 @@ def test_named_sessions_isolate_multiple_targets_and_refuse_duplicate_endpoints(
                 "breakpoint",
                 "add",
                 f"main_{session_name}",
+                "--authorize",
             )
             assert code == 0 and bp["data"]["bkpt"]["number"] == "1"
         code, sessions = _invoke(tmp_path, env, "session", "list")
@@ -541,7 +542,7 @@ def test_session_conflict_and_unauthorized_hardware_operations_are_refused(
         ]
         for command in dangerous:
             code, response = _invoke(tmp_path, env, *command)
-            assert code == 2
+            assert code == 2, (command, response)
             assert response["error"]["code"] == "AUTHORIZATION_REQUIRED"
 
         log = (tmp_path / "gdb.log").read_text()
@@ -553,6 +554,66 @@ def test_session_conflict_and_unauthorized_hardware_operations_are_refused(
         _stop(tmp_path, env)
         first.close()
         second.close()
+
+
+def test_halt_and_breakpoints_require_authorization_in_cli_and_daemon(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = _env(monkeypatch, tmp_path)
+    server = _listener()
+    try:
+        _start(
+            tmp_path,
+            env,
+            server.getsockname()[1],
+            "--gdb",
+            str(MOCKS / "fake_gdb.py"),
+        )
+
+        for command in (
+            ("halt",),
+            ("breakpoint-add", "main"),
+            ("breakpoint-remove", "1"),
+            ("breakpoint", "add", "main"),
+            ("breakpoint", "remove", "1"),
+        ):
+            code, denied = _invoke(tmp_path, env, *command)
+            assert code == 2, (command, denied)
+            assert denied["error"]["code"] == "AUTHORIZATION_REQUIRED"
+
+        with pytest.raises(SessionManagerError, match="authorize-run"):
+            session_operation("halt")
+        with pytest.raises(SessionManagerError, match="authorize"):
+            session_operation("breakpoint-add", location="main")
+
+        log = (tmp_path / "gdb.log").read_text()
+        assert "-exec-interrupt" not in log
+        assert "-break-insert" not in log
+        assert "-break-delete" not in log
+
+        code, halted = _invoke(tmp_path, env, "halt", "--authorize-run")
+        assert code == 0, halted
+        code, added = _invoke(tmp_path, env, "breakpoint", "add", "main", "--authorize")
+        assert code == 0, added
+        breakpoint = added["data"]["bkpt"]["number"]
+        code, removed = _invoke(
+            tmp_path,
+            env,
+            "breakpoint",
+            "remove",
+            str(breakpoint),
+            "--authorize",
+        )
+        assert code == 0, removed
+
+        actions = [
+            json.loads(line)["action"]
+            for line in (tmp_path / "audit.jsonl").read_text().splitlines()
+        ]
+        assert actions[-3:] == ["halt", "breakpoint-add", "breakpoint-remove"]
+    finally:
+        _stop(tmp_path, env)
+        server.close()
 
 
 def test_gdb_timeout_and_abnormal_exit_can_be_recovered(

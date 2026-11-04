@@ -140,7 +140,7 @@ def run_hil(config: dict[str, Any]) -> dict[str, Any]:
             for expression in config.get("expressions", [])
         }
         for location in breakpoints:
-            added = _invoke(config, "breakpoint", "add", location)
+            added = _invoke(config, "breakpoint", "add", location, "--authorize")
             results.setdefault("breakpoints", []).append(added)
             data = added.get("data")
             breakpoint_data = data.get("bkpt", data) if isinstance(data, dict) else None
@@ -215,7 +215,7 @@ def _cleanup_session(
             cleanup_errors.append(f"final halt failed: {exc}")
     for number in breakpoint_numbers if connected else []:
         try:
-            _invoke(config, "breakpoint", "remove", number)
+            _invoke(config, "breakpoint", "remove", number, "--authorize")
         except Exception as exc:
             cleanup_errors.append(f"breakpoint {number} cleanup failed: {exc}")
     try:

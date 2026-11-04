@@ -108,8 +108,10 @@ def parser() -> argparse.ArgumentParser:
             child.add_argument("--authorize", action="store_true")
     bp = command_parser("breakpoint-add")
     bp.add_argument("location")
+    bp.add_argument("--authorize", action="store_true")
     bp = command_parser("breakpoint-remove")
     bp.add_argument("number", type=int)
+    bp.add_argument("--authorize", action="store_true")
     var = command_parser("variable-read")
     var.add_argument("expression")
     mem = command_parser("memory-read")
@@ -124,11 +126,15 @@ def parser() -> argparse.ArgumentParser:
     flash.add_argument("--authorize", action="store_true")
     flash.add_argument("--authorize-command", action="store_true")
     flash.add_argument("--elf", type=Path)
-    for action_name in ("continue", "step", "next"):
+    for action_name in ("halt", "continue", "step", "next"):
         command_parsers[action_name].add_argument(
             "--authorize-run",
             action="store_true",
-            help="confirm that executing target code is authorized",
+            help=(
+                "confirm that pausing target execution is authorized"
+                if action_name == "halt"
+                else "confirm that executing target code is authorized"
+            ),
         )
     build = command_parser("build")
     build.add_argument("--authorize-run", action="store_true")
@@ -148,6 +154,8 @@ def parser() -> argparse.ArgumentParser:
             leaf.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
             for arg_name, options in positional:
                 leaf.add_argument(arg_name, **options)
+            if canonical in {"breakpoint-add", "breakpoint-remove"}:
+                leaf.add_argument("--authorize", action="store_true")
             leaf.set_defaults(canonical_command=canonical)
 
     add_nested("config", {"validate": ("config-validate", ())})

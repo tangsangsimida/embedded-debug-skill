@@ -20,7 +20,7 @@ from ..session_manager import (
     stop_session,
 )
 from ..session_store import read_session
-from .audit import audit
+from .audit import audit, authorize_operation
 from .connection import (
     _connection_settings as connection_settings,
 )
@@ -93,13 +93,22 @@ def handle_debug_command(
     if name in persistent_operations:
         if args.gdb_timeout is not None and args.gdb_timeout <= 0:
             raise ValueError("--gdb-timeout must be a positive number")
-        if name in {"continue", "step", "next"}:
-            require_authorized(name, args.authorize_run, "--authorize-run")
-        if name in {"reset", "memory-write", "flash"}:
-            require_authorized(name, args.authorize)
         settings = connection_settings(args, cfg, allow_connect_options=False)
         if settings["host"] not in {"127.0.0.1", "localhost", "::1"}:
             raise ValueError("Only loopback OpenOCD connections are allowed by default")
+        audit_target = str(settings["elf"] or f"{settings['host']}:{settings['gdb_port']}")
+        if name == "memory-write":
+            audit_target = f"0x{args.address:x}"
+        elif name == "breakpoint-add":
+            audit_target = args.location
+        elif name == "breakpoint-remove":
+            audit_target = str(args.number)
+        authorize_operation(
+            name,
+            audit_target,
+            authorized_run=bool(getattr(args, "authorize_run", False)),
+            authorized=bool(getattr(args, "authorize", False)),
+        )
         if name == "flash":
             project_root = cfg.config_path.parent if cfg.config_path else Path.cwd()
             project = discover_project(project_root)
@@ -183,12 +192,16 @@ def handle_debug_command(
             params["thread_id"] = args.thread_id
         elif name == "thread-select":
             params["thread_id"] = args.thread_id
-        elif name == "flash":
-            params["authorized"] = True
-        elif name == "reset":
-            params["authorized"] = True
-        if name in {"continue", "step", "next"}:
+        if name in {"halt", "continue", "step", "next"}:
             params["authorized_run"] = True
+        if name in {
+            "reset",
+            "memory-write",
+            "flash",
+            "breakpoint-add",
+            "breakpoint-remove",
+        }:
+            params["authorized"] = True
         if name == "memory-read" and not 1 <= args.length <= 4096:
             raise ValueError("memory read length must be between 1 and 4096 bytes")
         if name == "memory-write":
@@ -198,14 +211,6 @@ def handle_debug_command(
                 or args.value >= 1 << (8 * args.length)
             ):
                 raise ValueError("memory write value must fit a 1..8 byte length")
-        if name in {"continue", "step", "next", "halt", "reset", "flash"}:
-            audit(name, str(settings["elf"] or f"{settings['host']}:{settings['gdb_port']}"))
-        elif name == "memory-write":
-            audit(name, f"0x{args.address:x}")
-        elif name == "breakpoint-add":
-            audit(name, args.location)
-        elif name == "breakpoint-remove":
-            audit(name, str(args.number))
         response = session_operation(name, **params)
         response_data = response.get("data")
         target_info = response.get("target", {})

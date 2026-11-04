@@ -155,7 +155,7 @@ Change only the OpenOCD config paths and, when necessary, select a GDB that unde
 
 ## Safety
 
-Read-only inspection is the default. Explicit user authorization is required before programming/erasing flash, reset, memory or register writes, executing firmware that may control actuators, and bulk hardware tests. Never disable emergency stops, interlocks, or protection logic. Keep OpenOCD bound to loopback. Changes should be auditable. Do not use a successful build or mock result as proof of physical behavior.
+Read-only inspection is the default. Pausing/resuming/stepping and adding/removing breakpoints require `--authorize-run` or `--authorize` as appropriate. Explicit user authorization is also required before programming/erasing flash, reset, memory or register writes, executing firmware that may control actuators, and bulk hardware tests. Target-changing operations are recorded in the audit log. Never disable emergency stops, interlocks, or protection logic. Keep OpenOCD bound to loopback. Do not use a successful build or mock result as proof of physical behavior.
 
 ## Validation status and roadmap
 
