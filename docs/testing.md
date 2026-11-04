@@ -2,15 +2,15 @@
 
 ## Shared checks
 
-The CI baseline is Python 3.11. On each listed runner, `ci.yml` installs the package and runs Ruff, mypy, the complete pytest suite, wheel/sdist build, `pip check`, and `pip-audit`. The suite exercises the same Python implementation on each OS, including Mock GDB/MI, Mock OpenOCD, persistent-session IPC, timeout/recovery behavior, JSON CLI output, and authorization checks.
+The CI baseline is Python 3.11. Daily PR/master CI uses one representative runner for each OS family (`ubuntu-24.04`, `windows-2022`, and `macos-15`) and runs Ruff, mypy, the complete pytest suite, wheel/sdist build, `pip check`, and `pip-audit`. The suite exercises Mock GDB/MI, Mock OpenOCD, persistent-session IPC, timeout/recovery behavior, JSON CLI output, and authorization checks.
 
-`skill-install-test.yml` installs the Skill with the Skills CLI for Codex and Claude Code in an isolated profile. It verifies the installed Skill resources, installs the CLI/package, checks `--version`, `--help`, and `doctor`, and runs the Mock test suite. This verifies installation and command contracts. It does not verify that a live language model triggers a Skill from natural language.
+`skill-install-test.yml` runs a quick Ubuntu installation smoke for Codex and Claude Code on each PR/master push. Its full nine-platform-by-two-agent matrix runs nightly at 02:17 UTC and on `workflow_dispatch`. Both paths verify the installed Skill resources, install the CLI/package, check `--version`, `--help`, and `doctor`, and run the Mock test suite. Formal releases separately run the same full matrix against the exact candidate wheel through `release-gate-reusable.yml`. These checks verify installation and command contracts; they do not verify that a live language model triggers a Skill from natural language.
 
 ## Verified runner matrix
 
-The current CI matrix is intentionally wider than a single runner per OS:
+Daily CI coverage stays small and spans Linux, Windows, and macOS. The scheduled installation matrix and formal release gate cover:
 
-| Platform family | CI runners | Python |
+| Platform family | Nightly and release runners | Python |
 | --- | --- | --- |
 | Linux x64 | Ubuntu 24.04, Ubuntu 26.04 | 3.11 |
 | Linux arm64 | Ubuntu 24.04 arm64 | 3.11 |
@@ -19,7 +19,7 @@ The current CI matrix is intentionally wider than a single runner per OS:
 | macOS x64 | macOS 15 Intel | 3.11 |
 | macOS arm64 | macOS 15, macOS 26 | 3.11 |
 
-The CI matrix is the authoritative source for currently exercised runners. Release candidate quality checks and Codex/Claude Skills installation tests use the same runner and Python baseline. Review the exact workflow run for a candidate before claiming it passed; an older green run does not prove a later commit.
+The workflow files are authoritative for the split between daily, nightly, and release checks. Review the exact workflow run for a candidate before claiming it passed; an older green run does not prove a later commit.
 
 ## Platform-sensitive coverage
 
