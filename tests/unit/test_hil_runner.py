@@ -86,7 +86,8 @@ def test_mock_hil_exercises_run_control_breakpoints_and_cleanup(
     assert result["cleanup"]["data"]["stopped"] is True
     calls = [json.loads(line) for line in log.read_text().splitlines()]
     assert calls[-1] == ["session", "stop"]
-    assert ["breakpoint", "remove", "1"] in calls
+    assert ["breakpoint", "add", "main", "--authorize"] in calls
+    assert ["breakpoint", "remove", "1", "--authorize"] in calls
     assert ["step", "--authorize-run"] in calls
     assert ["continue", "--authorize-run"] in calls
 

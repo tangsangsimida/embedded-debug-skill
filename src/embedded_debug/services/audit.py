@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from ..platforms import get_platform
-from ..safety import require_authorized
+from ..safety import require_authorized, require_operation_authorized, requires_authorization
 from ..session_store import current_session_name
 
 
@@ -18,6 +18,21 @@ def authorize(
     """Reject unapproved state changes and audit every approved operation."""
     require_authorized(action, authorized, flag)
     audit(action, target)
+
+
+def authorize_operation(
+    operation: str,
+    target: str,
+    *,
+    authorized_run: bool = False,
+    authorized: bool = False,
+) -> None:
+    """Enforce and audit one target-affecting operation from the shared policy."""
+    require_operation_authorized(
+        operation, authorized_run=authorized_run, authorized=authorized
+    )
+    if requires_authorization(operation):
+        audit(operation, target)
 
 
 def audit(action: str, target: str) -> None:
