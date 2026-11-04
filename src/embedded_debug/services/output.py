@@ -56,7 +56,17 @@ def run_external(argv: Sequence[str], cwd: Path, as_json: bool, timeout: float) 
             process.wait(timeout=timeout)
         except (subprocess.TimeoutExpired, KeyboardInterrupt) as exc:
             if identity is not None:
-                get_platform().terminate_process_tree(process.pid, expected_identity=identity)
+                current_identity = get_platform().process_identity(process.pid)
+                # A launcher can exec the actual executable after Popen returns;
+                # PID, creation time and user still identify the same process.
+                if (
+                    current_identity is not None
+                    and current_identity.created == identity.created
+                    and current_identity.username == identity.username
+                ):
+                    get_platform().terminate_process_tree(
+                        process.pid, expected_identity=current_identity
+                    )
             if process.poll() is None:
                 process.kill()
             process.wait()
