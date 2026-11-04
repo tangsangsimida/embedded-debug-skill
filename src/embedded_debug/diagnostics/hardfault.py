@@ -77,10 +77,24 @@ def _stacked_frame(snapshot: dict[str, Any]) -> dict[str, str] | None:
     return {field: _hex(value) or "0x0" for field, value in values.items()}
 
 
+def _architecture(snapshot: dict[str, Any]) -> tuple[str, str]:
+    direct = str(snapshot.get("architecture", "unknown")).strip().lower()
+    if direct in SUPPORTED_CORTEX_M:
+        return direct, "snapshot"
+    backtrace = snapshot.get("backtrace")
+    if isinstance(backtrace, list):
+        for item in backtrace:
+            frame = item.get("frame", item) if isinstance(item, dict) else {}
+            candidate = str(frame.get("arch", "")).strip().lower()
+            if candidate in SUPPORTED_CORTEX_M:
+                return candidate, "backtrace"
+    return direct, "unconfirmed"
+
+
 def analyze_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
     """Analyze only evidence explicitly present in ``snapshot``."""
 
-    architecture = str(snapshot.get("architecture", "unknown")).strip().lower()
+    architecture, architecture_source = _architecture(snapshot)
     supported = architecture in SUPPORTED_CORTEX_M
     registers = _registers(snapshot)
     limitations: list[str] = []
@@ -118,6 +132,7 @@ def analyze_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
     return {
         "status": "analyzed" if supported else "unknown",
         "architecture": architecture,
+        "architecture_source": architecture_source,
         "architecture_supported": supported,
         "confidence": confidence,
         "fault_pc": _hex(fault_pc),
