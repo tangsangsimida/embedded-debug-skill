@@ -1,8 +1,12 @@
-import json
+"""Real hardware tests are opt-in and use a user-supplied existing project setup."""
+
+from __future__ import annotations
+
 import os
-import subprocess
 
 import pytest
+
+from tests.hardware.hil_runner import load_config, run_hil
 
 CONFIG = os.environ.get("EDBG_HARDWARE_CONFIG")
 pytestmark = [
@@ -14,18 +18,9 @@ pytestmark = [
 ]
 
 
-def test_user_configured_target_register_read() -> None:
-    environment = os.environ.copy()
-    environment["EDBG_CONFIG"] = str(CONFIG)
-    result = subprocess.run(
-        ["edbg", "registers", "--json"],
-        env=environment,
-        text=True,
-        capture_output=True,
-        timeout=60,
-        check=False,
-    )
-    payload = json.loads(result.stdout)
-    assert result.returncode == 0, payload
-    assert payload["success"] is True
-    assert isinstance(payload["data"], list)
+def test_existing_project_debug_loop() -> None:
+    assert CONFIG is not None
+    result = run_hil(load_config(CONFIG))
+    assert result["connect"]["target"]["connection"] == "connected"
+    assert isinstance(result["registers"].get("data"), list)
+    assert "backtrace" in result

@@ -123,6 +123,18 @@ def main() -> int:
     doctor: dict[str, Any] = json.loads(doctor_text)
     if doctor.get("success") is not True or "debug_tools_ready" not in doctor.get("data", {}):
         raise RuntimeError("Installed CLI doctor response does not satisfy the JSON contract")
+    environment_text = run_edbg_script(
+        venv_python, skill, "--json", "environment", "inspect", env=env
+    )
+    environment: dict[str, Any] = json.loads(environment_text)
+    if environment.get("success") is not True or "tools" not in environment.get("data", {}):
+        raise RuntimeError("Installed CLI environment response does not satisfy the JSON contract")
+    plan_text = run_edbg_script(
+        venv_python, skill, "--json", "environment", "plan", env=env
+    )
+    plan: dict[str, Any] = json.loads(plan_text)
+    if plan.get("success") is not True or not isinstance(plan.get("data", {}).get("actions"), list):
+        raise RuntimeError("Installed CLI environment plan does not satisfy the JSON contract")
 
     run([sys.executable, "-m", "pip", "install", "-e", ".[dev]"], env=env, cwd=root)
     release_wheel = env.get("EDBG_RELEASE_WHEEL")
@@ -157,6 +169,12 @@ def main() -> int:
     package_data = json.loads(package_doctor.stdout)
     if package_data.get("success") is not True or "cli_ready" not in package_data.get("data", {}):
         raise RuntimeError("Packaged CLI doctor response does not satisfy the JSON contract")
+    package_environment = run([command, "environment", "inspect", "--json"], env=env, cwd=root)
+    if json.loads(package_environment.stdout).get("success") is not True:
+        raise RuntimeError("Packaged CLI environment inspection failed")
+    package_plan = run([command, "environment", "plan", "--json"], env=env, cwd=root)
+    if not isinstance(json.loads(package_plan.stdout).get("data", {}).get("actions"), list):
+        raise RuntimeError("Packaged CLI environment plan failed")
     installed_build = json.loads(run([command, "--json", "build-info"], env=env, cwd=root).stdout)
     launcher_build = json.loads(
         run_edbg_script(venv_python, skill, "--json", "build-info", env=env)

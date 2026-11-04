@@ -39,3 +39,21 @@ sudo openocd \
 Confirmed: USB probe enumeration, CMSIS-DAP adapter information, SWD DPIDR, Cortex-M7 examination, and the two read-only register values above. No source-level GDB session, ELF loading, breakpoints, stepping, application behavior, peripherals, or test harness has been validated. No board-specific wiring, reset line, external sensors, actuators, or power arrangement is documented.
 
 Re-detect the probe and target on every session. Keep ordinary hardware tests read-only. Obtain explicit authorization before reset, halt/continue, flash/erase, memory or register writes, or running firmware that can actuate hardware. Never infer pin wiring or board capabilities from the MCU family. Use a user-provided firmware project/ELF and existing board settings for source-level debugging; do not invent them.
+
+## Opt-in HIL workflow
+
+The generic HIL runner is `tests/hardware/hil_runner.py`; the pytest entry point is skipped unless both opt-in variables are set. Supply the project's existing connection parameters and a matching ELF if checking expressions:
+
+```json
+{
+  "cli": "edbg",
+  "session": "hardware-validation",
+  "global_args": ["--gdb", "gdb-multiarch"],
+  "connect_args": ["--reuse-server", "--elf", "build/firmware.elf"],
+  "expressions": ["main"],
+  "breakpoints": [],
+  "run_control": false
+}
+```
+
+Run the read-only stages with `env EDBG_HARDWARE_TESTS=1 EDBG_HARDWARE_CONFIG=/path/to/hil.json pytest -m hardware`. The runner expects the target already halted before stop-mode reads. For an explicitly authorized run-control check, set `authorize_run_control` to `true` in the reviewed config and separately set `EDBG_HARDWARE_RUN_CONTROL=1`; the test will halt, single-step, continue, pause again, and stop its session. Breakpoint insertion likewise requires `authorize_breakpoints: true`. Do not enable either option with firmware that may control actuators or safety-relevant outputs. This fixture has not had the source-level HIL flow run; only the previously documented adapter/core/register probe observations are confirmed.

@@ -25,6 +25,7 @@ Ask your agent: “Use EmbeddedDebug Skill to inspect my OpenOCD environment and
 ## Current implementation
 
 - System-first PATH discovery and version checks with bounded subprocess timeouts.
+- Independent environment inspection and non-mutating remediation plans; an explicitly authorized Python CLI install uses a versioned user cache and never changes system tools or shell startup files.
 - Optional strict project TOML overrides and loopback-only OpenOCD default.
 - OpenOCD process management, config file composition, port reuse detection, logging, and cleanup.
 - Project discovery for existing VS Code launch/tasks, OpenOCD arguments, build commands, and ELF outputs. A standalone target file and `.edbg.toml` are not required if existing project settings define the path.
@@ -75,6 +76,8 @@ Start in the existing project workspace:
 ```sh
 edbg discover --json
 edbg doctor --json
+edbg environment inspect --json
+edbg environment plan --json
 edbg --session bench-a connect --elf build/firmware.elf
 edbg --session bench-a registers --json
 ```
@@ -156,8 +159,10 @@ Read-only inspection is the default. Explicit user authorization is required bef
 
 ## Validation status and roadmap
 
-The repository includes unit/Mock tests and Windows, Linux, and macOS CI for package build, lint, types, tests, Skill validation, and isolated Skills CLI installs for Codex and Claude Code. The release workflow also installs the exact release wheel on every platform/agent matrix before applying the stable-release gate. Stable Release is blocked by `release-readiness.toml` until all required gates pass. Hardware tests require explicit opt-in and user-supplied config and are skipped by default; no physical probe test is claimed.
+The v0.1.0 minimum scope is project/tool discovery, GDB-verified OpenOCD connections, persistent GDB/MI inspection and guarded run control, system-first environment diagnostics, and validated Codex/Claude Skills installation. Advanced HardFault, RTOS/ThreadX, SVD, and telemetry diagnostics are roadmap items, not release blockers or current support claims. This candidate adds an executable opt-in HIL runner, but no source-level physical hardware test has been run yet.
 
-Next: complete end-to-end Skill installation with the exact release artifact, implement architecture plugin APIs and evidence-based HardFault decoding, safe SVD reads, ThreadX/OpenOCD compatibility testing, and serial telemetry.
+The repository includes unit/Mock tests and Windows, Linux, and macOS CI for package build, lint, types, tests, Skill validation, and isolated Skills CLI installs for Codex and Claude Code. The release workflow also installs the exact release wheel on every platform/agent matrix before applying the stable-release gate. Stable Release is blocked by `release-readiness.toml` until the physical candidate HIL evidence and exact artifact install gates pass. Hardware tests require explicit opt-in and a user-supplied config and are skipped by default.
+
+Roadmap: validated architecture-specific HardFault decoding, safe SVD reads, ThreadX/OpenOCD compatibility testing, and serial/RTT telemetry.
 
 See [architecture](docs/architecture.md), [installation](docs/installation.md), [configuration](docs/configuration.md), [CLI reference](docs/cli-reference.md), and [troubleshooting](docs/troubleshooting.md).

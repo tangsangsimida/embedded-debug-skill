@@ -3,8 +3,17 @@
 stable_release_ready = false
 blockers = [
   "No physical target/adapter end-to-end test has been run for this candidate.",
-  "Architecture-specific HardFault diagnostics are not implemented.",
-  "RTOS awareness and ThreadX decoding are not validated.",
-  "SVD peripheral access and telemetry backends are not implemented.",
   "The exact release candidate has not passed the isolated Skills CLI and CLI-install release gate.",
+]
+minimum_scope = [
+  "OpenOCD-configured target discovery and verified GDB/MI connection.",
+  "Persistent GDB session with state, registers, variables, stack, breakpoints, and guarded run control.",
+  "System-first tool discovery, safe authorization, and cross-platform package/Skill installation.",
+  "Hardware HIL evidence for the exact candidate, clearly separated from Mock/CI evidence.",
+]
+roadmap = [
+  "Validated architecture-specific HardFault analysis plugins.",
+  "RTOS awareness compatibility and ThreadX control-block decoding.",
+  "SVD peripheral descriptions with side-effect-aware register reads.",
+  "RTT, trace, and non-intrusive telemetry backends.",
 ]

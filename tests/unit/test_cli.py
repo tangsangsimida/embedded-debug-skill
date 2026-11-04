@@ -24,6 +24,23 @@ def test_nested_command_syntax(capsys) -> None:
     assert data["command"] == "config-validate"
 
 
+def test_environment_inspect_and_plan_are_json_diagnostics(capsys) -> None:
+    assert run(["--json", "environment", "inspect"]) == 0
+    inspected = json.loads(capsys.readouterr().out)
+    assert inspected["success"] is True
+    assert "missing_debug_tools" in inspected["data"]
+    assert run(["environment", "plan", "--json"]) == 0
+    plan = json.loads(capsys.readouterr().out)
+    assert plan["command"] == "environment-plan"
+    assert "actions" in plan["data"]
+
+
+def test_environment_install_cli_requires_authorization(capsys) -> None:
+    assert run(["--json", "environment", "install-cli", "--source", "example==0.1"]) == 2
+    result = json.loads(capsys.readouterr().out)
+    assert result["error"]["code"] == "AUTHORIZATION_REQUIRED"
+
+
 def test_connect_reuses_existing_server_with_mock_gdb(tmp_path, monkeypatch, capsys) -> None:
     import socket
     from pathlib import Path
