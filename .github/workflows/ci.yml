@@ -10,6 +10,7 @@ permissions:
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
+# Keep the complete PR matrix attached to the candidate commit for release-gate evidence.
 jobs:
   test:
     runs-on: ${{ matrix.os }}
