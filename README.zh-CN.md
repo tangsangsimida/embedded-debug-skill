@@ -22,7 +22,11 @@ CLI 需要 Python 3.11+。硬件调试还需要用户自行安装的 OpenOCD、�
 
 项目按 OpenOCD、GDB 架构和实际探测响应确定可用能力，不维护芯片厂商白名单。用户直接提供 interface/target/board 配置、完整 OpenOCD 配置或自定义初始化命令；切换目标或调试器不要求修改 Python 源码。未知能力保持 `unknown`。
 
+v0.1.0 最小范围为工程/工具发现、经 GDB 验证的 OpenOCD 连接、持久化 GDB/MI 检查与受保护的运行控制、System Toolchain First 环境诊断，以及已验证的 Codex/Claude Skills 安装。HardFault、RTOS/ThreadX、SVD 和遥测列入路线图，不作为当前能力声明。本候选版本新增可执行的 opt-in HIL runner，但尚未执行源码级实体硬件闭环测试。
+
 候选代码已实现工具链 PATH 诊断、现有项目配置发现、OpenOCD 服务复用与子进程管理、跨 CLI 持久化且串行化的 GDB/MI2 会话、基本 GDB 操作、Codex/Claude Skills CLI 安装验证和 Mock 测试。平台目录、进程身份/回收、锁和认证 IPC 由平台适配层封装。使用 `--session <name>` 可隔离多个目标会话；相同回环 GDB 端口不能被多个会话同时认领。尚无稳定 Release；`release-readiness.toml` 会在缺少验收项时阻止发布。HardFault/ThreadX/SVD/遥测和实体硬件链路尚未验证。
+
+`edbg environment inspect --json` 独立检查当前工具，`edbg environment plan --json` 只提供安装来源类别和 Shell PATH 配置建议，不修改工具链或 Shell 文件。授权的 `edbg environment install-cli --source <pip-source> --authorize` 只将 Python CLI 安装到版本隔离的用户缓存。
 
 ## 安装 CLI 与快速检查
 
@@ -30,6 +34,8 @@ CLI 需要 Python 3.11+。硬件调试还需要用户自行安装的 OpenOCD、�
 python <installed-skill-directory>/scripts/run_edbg.py --install-python-cli doctor --json
 edbg --help
 edbg doctor --json
+edbg environment inspect --json
+edbg environment plan --json
 ```
 
 Skills CLI 只负责安装 Skill 文件，不会安装 Python CLI、GDB、OpenOCD 或驱动。项目遵循 System Toolchain First：按 CLI 覆盖、可选项目配置、PATH 的顺序发现工具，不改 PATH 和 Shell 配置，不自动安装系统依赖。项目无需创建 `.edbg.toml`；它只用于覆盖发现到的设置。

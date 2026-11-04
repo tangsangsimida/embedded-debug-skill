@@ -35,6 +35,8 @@ The CI matrix is the authoritative source for currently exercised runners. Relea
 
 Hardware integration tests are opt-in with `EDBG_HARDWARE_TESTS=1` and `EDBG_HARDWARE_CONFIG`. Standard CI does not access USB probes or MCUs. Passing mocked tests proves software behavior only; it does not prove that an OpenOCD build, USB driver/permission configuration, adapter firmware, target configuration, or physical board works on a given platform. See [hardware-test-platform.md](hardware-test-platform.md) for any locally observed fixture, and re-detect it before use.
 
+`tests/hardware/hil_runner.py` accepts a user-authored JSON config that points at the project's existing debug setup. It verifies the GDB connection, requires the target to be already halted before register/stack/variable inspection, and cleans up its session and any breakpoints it created. Optional halt/step/continue testing requires both `authorize_run_control: true` in that file and `EDBG_HARDWARE_RUN_CONTROL=1`; no reset, flash, or memory/register write is performed by this runner. Variable reads require a matching ELF in `connect_args`. Hardware tests remain unverified until the opt-in test is actually run with a user-provided target/ELF configuration.
+
 ## Local commands
 
 ```sh

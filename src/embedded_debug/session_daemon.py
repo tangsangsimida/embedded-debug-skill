@@ -17,6 +17,7 @@ from .gdb.controller import GDBController
 from .gdb.mi_transport import GDBError, GDBTimeout, MITransport
 from .openocd.manager import OpenOCDError, OpenOCDManager
 from .platforms import get_platform
+from .safety import require_authorized
 from .session_store import (
     clear_session,
     current_session_name,
@@ -389,10 +390,9 @@ class DebugSessionDaemon:
                 "target_state": self.transport.state,
             }
         if operation == "cancel":
-            if not params.get("authorized_run"):
-                raise PermissionError(
-                    "Cancelling a GDB operation requires explicit --authorize-run"
-                )
+            require_authorized(
+                "Cancelling a GDB operation", bool(params.get("authorized_run")), "--authorize-run"
+            )
             self.transport.cancel()
             return {
                 "success": True,
@@ -400,10 +400,12 @@ class DebugSessionDaemon:
                 "target": self.target,
                 "target_state": self.transport.state,
             }
-        if operation in {"continue", "step", "next"} and not params.get("authorized_run"):
-            raise PermissionError("Target execution requires explicit --authorize-run")
-        if operation in {"reset", "memory-write", "flash"} and not params.get("authorized"):
-            raise PermissionError(f"{operation} requires explicit --authorize")
+        if operation in {"continue", "step", "next"}:
+            require_authorized(
+                "Target execution", bool(params.get("authorized_run")), "--authorize-run"
+            )
+        if operation in {"reset", "memory-write", "flash"}:
+            require_authorized(operation, bool(params.get("authorized")))
         if operation == "halt":
             self.controller.halt()
             if not self.transport.wait_for_state("halted", 3.0):

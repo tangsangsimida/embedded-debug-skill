@@ -14,8 +14,8 @@ from collections.abc import Sequence
 from pathlib import Path
 
 PINNED_VERSION = "0.1.0"
-SOURCE = "git+https://github.com/tangsangsimida/embedded-debug-skill.git@e3592cdffc4f5e940a28dd34174e115b7088cc3e"
-PINNED_SOURCE_DIGEST = "b5ac39dcaff73f3ab8309b615ffbfd1b477686f292723e731f248ee93141b60b"
+SOURCE = "git+https://github.com/tangsangsimida/embedded-debug-skill.git@b5e0dc822f99ec15ed5813d636dae283d14c9c12"
+PINNED_SOURCE_DIGEST = "aafb6167f5aeda707f00f04780d445bd004289c92d7e79c528df556ea531ca7a"
 
 
 def _matches_build_info(command: Sequence[str]) -> bool:
@@ -171,37 +171,80 @@ def main(argv: Sequence[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
-    cached_cli.parent.mkdir(parents=True, exist_ok=True)
-    create = subprocess.run(
-        [python, "-m", "venv", str(cached_cli.parent.parent)],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-    )
-    if create.returncode:
-        print(create.stderr or "Could not create an isolated Python environment.", file=sys.stderr)
+    environment = cached_cli.parent.parent
+    environment.parent.mkdir(parents=True, exist_ok=True)
+    if environment.exists():
         print(
-            "Install Python 3.11+ with venv support, or install uv and retry. "
-            "No system toolchain or shell configuration was changed.",
+            f"An incomplete CLI environment already exists at {environment}; "
+            "review and remove it before retrying.",
             file=sys.stderr,
         )
-        return create.returncode
+        return 2
+    try:
+        create = subprocess.run(
+            [python, "-m", "venv", str(environment)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=60,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        print(f"Could not create an isolated Python environment: {exc}", file=sys.stderr)
+        return 2
     venv_python = _venv_python(cached_cli)
-    install = subprocess.run(
-        [str(venv_python), "-m", "pip", "install", SOURCE],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-    )
+    installer = [str(venv_python), "-m", "pip"]
+    if create.returncode:
+        # Distros may ship Python without ensurepip. Build an empty environment,
+        # then use the already selected interpreter's pip targeting support.
+        shutil.rmtree(environment, ignore_errors=True)
+        try:
+            fallback = subprocess.run(
+                [python, "-m", "venv", "--without-pip", str(environment)],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=60,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            print(f"Could not create a pip-less isolated environment: {exc}", file=sys.stderr)
+            return 2
+        if fallback.returncode:
+            shutil.rmtree(environment, ignore_errors=True)
+            print(
+                fallback.stderr or create.stderr or "Python venv creation failed.",
+                file=sys.stderr,
+            )
+            print(
+                "Select Python 3.11+ with venv support or install uv. "
+                "System tools and shell settings were not changed.",
+                file=sys.stderr,
+            )
+            return fallback.returncode
+        installer = [python, "-m", "pip", "--python", str(venv_python)]
+    try:
+        install = subprocess.run(
+            [*installer, "install", "--disable-pip-version-check", "--no-input", SOURCE],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=300,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        shutil.rmtree(environment, ignore_errors=True)
+        print(f"Pinned CLI installation did not complete: {exc}", file=sys.stderr)
+        return 2
     if install.stdout:
         print(install.stdout, end="", file=sys.stderr)
     if install.stderr:
         print(install.stderr, end="", file=sys.stderr)
     if install.returncode:
+        shutil.rmtree(environment, ignore_errors=True)
         print(
             "Pinned CLI installation failed. Check Python venv/pip support and network access; "
             "system toolchains were not changed.",
@@ -209,6 +252,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return install.returncode
     if not _matches_build_info([str(cached_cli)]):
+        shutil.rmtree(environment, ignore_errors=True)
         print("Installed CLI source does not match this Skill candidate.", file=sys.stderr)
         return 2
     return _run_cached(cached_cli, remainder)
