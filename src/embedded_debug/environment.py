@@ -95,7 +95,13 @@ def remediation_plan(
             path_example = '$env:Path = "C:\\path\\to\\tool\\bin;$env:Path"'
         else:
             path_example = "Add the tool's bin directory to PATH using your shell or OS settings."
-        items.append({"tool": executable, "action": message, "path_guidance": path_example})
+        entry = {"tool": executable, "action": message, "path_guidance": path_example}
+        if key in {"gdb", "openocd"}:
+            entry["isolated_option"] = (
+                "Review an archive and independently verify its SHA-256, then use "
+                "environment install-tool-archive with explicit authorization."
+            )
+        items.append(entry)
     return items
 
 

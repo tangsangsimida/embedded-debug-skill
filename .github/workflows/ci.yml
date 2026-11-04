@@ -10,6 +10,7 @@ permissions:
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
+# Keep the complete PR matrix attached to the candidate commit for release-gate evidence.
 jobs:
   test:
     runs-on: ${{ matrix.os }}
@@ -19,7 +20,7 @@ jobs:
         # Fast PR coverage; the full OS/architecture matrix runs nightly and
         # again as part of the formal release gate.
         os: [ubuntu-24.04, windows-2022, macos-15]
-        python-version: ['3.11']
+        python-version: ['3.11', '3.12', '3.13']
     steps:
       - uses: actions/checkout@v4
         with:

@@ -33,9 +33,14 @@ class SessionFailure(RuntimeError):
     pass
 
 
+class TargetStateError(SessionFailure):
+    pass
+
+
 class DebugSessionDaemon:
     def __init__(self, session_id: str, settings: dict[str, Any]) -> None:
         self.session_id = session_id
+        self.session_name = current_session_name()
         self.settings = settings
         self.lock_handle: Any = None
         self.lock_acquired = False
@@ -84,6 +89,7 @@ class DebugSessionDaemon:
             self.settings.get("adapter_khz"),
             config_files=self.settings.get("config_files", []),
             extra_args=self.settings.get("server_args", []),
+            trusted_config=bool(self.settings.get("trusted_config", False)),
         )
         print("session daemon OpenOCD ready", file=sys.stderr, flush=True)
         if self.stopping.is_set():
@@ -185,6 +191,7 @@ class DebugSessionDaemon:
             worker.start()
 
     def _handle_connection(self, connection: socket.socket) -> None:
+        set_session_name(self.session_name)
         try:
             with connection:
                 connection.settimeout(150.0)
@@ -225,7 +232,30 @@ class DebugSessionDaemon:
             OpenOCDError,
             SessionFailure,
         ) as exc:
-            response = {"success": False, "error": str(exc)}
+            if isinstance(exc, GDBTimeout):
+                code = "GDB_TIMEOUT"
+                recovery = "Inspect target state and recover the session before retrying."
+            elif isinstance(exc, GDBError):
+                code = "GDB_ERROR"
+                recovery = "Inspect GDB and target connection diagnostics."
+            elif isinstance(exc, TargetStateError):
+                code = "TARGET_STATE_UNCONFIRMED"
+                recovery = "Confirm target state before retrying the operation."
+            elif isinstance(exc, PermissionError):
+                code = "AUTHORIZATION_REQUIRED"
+                recovery = "Review the operation and supply its authorization flag."
+            elif isinstance(exc, (ValueError, TypeError, KeyError)):
+                code = "INVALID_ARGUMENT"
+                recovery = "Correct the operation parameters."
+            else:
+                code = "SESSION_ERROR"
+                recovery = "Inspect session diagnostics before retrying."
+            response = {
+                "success": False,
+                "error": str(exc),
+                "error_code": code,
+                "recovery": recovery,
+            }
         except Exception as exc:  # Keep one malformed operation from killing the owner process.
             response = {"success": False, "error": f"Internal session error: {exc}"}
         self._reply(connection, response)
@@ -239,7 +269,7 @@ class DebugSessionDaemon:
 
     def _require_halted(self) -> None:
         if self.transport.state != "halted":
-            raise SessionFailure(
+            raise TargetStateError(
                 f"Target state is {self.transport.state}; halt the target before this inspection"
             )
 
@@ -280,6 +310,8 @@ class DebugSessionDaemon:
                 self.settings.get("adapter_khz"),
                 config_files=self.settings.get("config_files", []),
                 extra_args=self.settings.get("server_args", []),
+                trusted_config=bool(self.settings.get("trusted_config", False))
+                or authorize_openocd_restart,
             )
         self.transport = MITransport(
             self.settings["gdb_executable"], float(self.settings.get("gdb_timeout", 10.0))
@@ -371,6 +403,8 @@ class DebugSessionDaemon:
                     "async_events": [
                         record.raw for record in list(self.transport.async_records)[-50:]
                     ],
+                    "async_events_dropped": self.transport.async_records_dropped,
+                    "unmatched_results_dropped": self.transport.unmatched_results_dropped,
                 },
             }
         if operation == "recover":
@@ -404,19 +438,24 @@ class DebugSessionDaemon:
                 "target_state": self.transport.state,
             }
         if operation == "halt":
-            self.controller.halt()
-            if not self.transport.wait_for_state("halted", 3.0):
-                raise GDBTimeout("GDB accepted halt but no asynchronous stop event arrived")
+            if self.transport.state != "halted":
+                self.transport.invalidate_state()
+                self.controller.halt()
+                if not self.transport.wait_for_state("halted", 3.0):
+                    raise GDBTimeout("GDB accepted halt but no asynchronous stop event arrived")
             data: Any = {"state": self.transport.state}
         elif operation == "continue":
             self._require_halted()
+            self.transport.invalidate_state()
             self.controller.resume()
             data = {"state": self.transport.state}
         elif operation in {"step", "next"}:
             self._require_halted()
+            self.transport.invalidate_state()
             self.transport.command("-exec-step" if operation == "step" else "-exec-next")
             data = {"state": self.transport.state}
         elif operation == "reset":
+            self.transport.invalidate_state()
             self.transport.command('-interpreter-exec console "monitor reset halt"')
             if not self.transport.wait_for_state("halted", 5.0):
                 raise GDBTimeout("Reset completed without a confirmed halted event")

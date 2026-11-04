@@ -29,7 +29,10 @@ from .session_store import (
 
 
 class SessionManagerError(RuntimeError):
-    pass
+    def __init__(self, message: str, code: str = "SESSION_ERROR", recovery: str = "") -> None:
+        super().__init__(message)
+        self.code = code
+        self.recovery = recovery
 
 
 def _current_status() -> dict[str, Any] | None:
@@ -301,5 +304,9 @@ def stop_session(timeout: float = 6.0) -> dict[str, Any]:
 def session_operation(operation: str, **params: Any) -> dict[str, Any]:
     response = request_session(operation, **params)
     if not response.get("success"):
-        raise SessionManagerError(str(response.get("error", "Debug operation failed")))
+        raise SessionManagerError(
+            str(response.get("error", "Debug operation failed")),
+            str(response.get("error_code", "SESSION_ERROR")),
+            str(response.get("recovery", "")),
+        )
     return response

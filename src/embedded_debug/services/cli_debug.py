@@ -31,9 +31,7 @@ from .connection import (
 from .output import emit, run_external
 
 
-def handle_debug_command(
-    name: str, args: argparse.Namespace, cfg: ProjectConfig
-) -> int | None:
+def handle_debug_command(name: str, args: argparse.Namespace, cfg: ProjectConfig) -> int | None:
     if name == "build":
         require_authorized(
             "Build executes a workspace command",
@@ -54,16 +52,21 @@ def handle_debug_command(
             build_command = candidate["argv"]
             build_cwd = root
         audit("build-command", " ".join(build_command))
-        build_result = run_external(build_command, build_cwd, args.json)
+        build_result = run_external(build_command, build_cwd, args.json, args.task_timeout)
         ok = build_result.returncode == 0
         emit(
             Envelope(
                 name,
                 ok,
-                data={"exit_code": build_result.returncode},
+                data={"exit_code": build_result.returncode, "timed_out": build_result.timed_out},
                 error=None
                 if ok
-                else {"code": "BUILD_FAILED", "message": "Build command failed"},
+                else {
+                    "code": "BUILD_TIMEOUT" if build_result.timed_out else "BUILD_FAILED",
+                    "message": "Build command timed out"
+                    if build_result.timed_out
+                    else "Build command failed",
+                },
             ),
             args.json,
         )
@@ -106,9 +109,7 @@ def handle_debug_command(
         elif name == "breakpoint-remove":
             audit_target = str(args.number)
         expression = str(args.expression) if name == "variable-read" else ""
-        arbitrary_expression = name == "variable-read" and not is_simple_variable_path(
-            expression
-        )
+        arbitrary_expression = name == "variable-read" and not is_simple_variable_path(expression)
         operation = "variable-evaluate" if arbitrary_expression else name
         if arbitrary_expression:
             audit_target = expression
@@ -135,7 +136,7 @@ def handle_debug_command(
                 task_argv = flash_task["argv"]
                 task_cwd = Path(project["project_root"])
                 audit("flash-command", " ".join(task_argv))
-                flash_result = run_external(task_argv, task_cwd, args.json)
+                flash_result = run_external(task_argv, task_cwd, args.json, args.task_timeout)
                 reconnect = None
                 if had_session and flash_result.returncode == 0:
                     try:
@@ -152,6 +153,7 @@ def handle_debug_command(
                         data={
                             "source": flash_task["source"],
                             "exit_code": flash_result.returncode,
+                            "timed_out": flash_result.timed_out,
                             "session_reconnected": bool(reconnect and "error" not in reconnect)
                             if had_session
                             else None,
@@ -161,7 +163,12 @@ def handle_debug_command(
                         ),
                         error=None
                         if succeeded
-                        else {"code": "FLASH_FAILED", "message": "Workspace flash task failed"},
+                        else {
+                            "code": "FLASH_TIMEOUT" if flash_result.timed_out else "FLASH_FAILED",
+                            "message": "Workspace flash task timed out"
+                            if flash_result.timed_out
+                            else "Workspace flash task failed",
+                        },
                     ),
                     args.json,
                 )
@@ -215,11 +222,7 @@ def handle_debug_command(
         if name == "memory-read" and not 1 <= args.length <= 4096:
             raise ValueError("memory read length must be between 1 and 4096 bytes")
         if name == "memory-write":
-            if (
-                not 1 <= args.length <= 8
-                or args.value < 0
-                or args.value >= 1 << (8 * args.length)
-            ):
+            if not 1 <= args.length <= 8 or args.value < 0 or args.value >= 1 << (8 * args.length):
                 raise ValueError("memory write value must fit a 1..8 byte length")
         if arbitrary_expression:
             params["authorized_expression"] = True

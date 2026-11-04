@@ -132,6 +132,7 @@ def _connection_settings(
         if cfg.config_path
         else ide.get("server_args", []),
         "commands": commands,
+        "trusted_config": bool(getattr(args, "authorize_openocd_config", False)),
         "adapter_khz": (
             cli_value("adapter_khz")
             or (stored_session.get("adapter_khz") if session_active else None)
@@ -175,6 +176,7 @@ def _daemon_settings(settings: dict[str, Any]) -> dict[str, Any]:
         "config_files": settings["config_files"],
         "server_args": settings["server_args"],
         "commands": settings["commands"],
+        "trusted_config": settings["trusted_config"],
         "adapter_khz": settings["adapter_khz"],
         "openocd_executable": settings["openocd_executable"],
         "gdb_executable": settings["gdb_executable"],

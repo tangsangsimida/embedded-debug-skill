@@ -20,6 +20,7 @@ from ..environment import (
 )
 from ..models import Envelope
 from ..safety import require_authorized
+from ..tool_archive import install_tool_archive, remove_tool_archive
 from .audit import audit
 from .output import emit
 
@@ -39,7 +40,11 @@ def handle_environment_command(
         return 0
     if name == "environment-plan":
         inspected = inspect_environment(
-            {k: str(v) for k, v in asdict(cfg.tools).items()}
+            {
+                **{k: str(v) for k, v in asdict(cfg.tools).items()},
+                **({"gdb": args.gdb} if args.gdb else {}),
+                **({"openocd": args.openocd} if args.openocd else {}),
+            }
         )
         emit(Envelope(name, True, data={"actions": remediation_plan(inspected)}), args.json)
         return 0
@@ -49,10 +54,22 @@ def handle_environment_command(
         result = install_user_cli(args.source, authorized=True)
         emit(Envelope(name, True, data=result), args.json)
         return 0
-    if name == "environment-path-add":
-        result = repair_user_path(
-            args.directory, shell=args.shell, authorized=bool(args.authorize)
+    if name == "environment-install-tool-archive":
+        require_authorized("Installing the reviewed isolated tool archive", args.authorize)
+        audit("install-tool-archive", f"kind={args.kind} sha256={args.sha256}")
+        result = install_tool_archive(
+            args.source, args.sha256, args.executable, args.kind, authorized=True
         )
+        emit(Envelope(name, True, data=result), args.json)
+        return 0
+    if name == "environment-remove-tool-archive":
+        require_authorized("Removing the isolated tool archive", args.authorize)
+        audit("remove-tool-archive", f"sha256={args.sha256}")
+        result = remove_tool_archive(args.sha256, authorized=True)
+        emit(Envelope(name, True, data=result), args.json)
+        return 0
+    if name == "environment-path-add":
+        result = repair_user_path(args.directory, shell=args.shell, authorized=bool(args.authorize))
         if result["changed"]:
             audit("user-path-add", f"{result['shell']}:{result['directory']}")
         emit(Envelope(name, True, data=result), args.json)

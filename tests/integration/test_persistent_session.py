@@ -67,6 +67,7 @@ def _start(cwd: Path, env: dict[str, str], port: int, *options: str) -> dict[str
         env,
         *global_options,
         "connect",
+        "--authorize-openocd-config",
         "--host",
         "127.0.0.1",
         "--gdb-port",
@@ -435,10 +436,12 @@ def test_named_sessions_isolate_multiple_targets_and_refuse_duplicate_endpoints(
 
         code, status = _invoke(tmp_path, env, "--session", "board-a", "session", "status")
         assert code == 0 and status["data"]["active"] is True
+        assert status["data"]["session_name"] == "board-a"
         code, _ = _invoke(tmp_path, env, "--session", "board-a", "session", "stop")
         assert code == 0
         code, status = _invoke(tmp_path, env, "--session", "board-b", "session", "status")
         assert code == 0 and status["data"]["active"] is True
+        assert status["data"]["session_name"] == "board-b"
     finally:
         _invoke(tmp_path, env, "--session", "board-a", "session", "stop")
         _invoke(tmp_path, env, "--session", "board-b", "session", "stop")
@@ -681,6 +684,8 @@ def test_gdb_timeout_and_abnormal_exit_can_be_recovered(
         code, timeout = _invoke(tmp_path, env, "variable", "read", "slow_value")
         assert code == 2
         assert "timed out" in timeout["error"]["message"]
+        assert timeout["error"]["code"] == "GDB_TIMEOUT"
+        assert timeout["error"]["recovery"]
 
         code, recovered = _invoke(tmp_path, env, "session", "recover")
         assert code == 0, recovered
@@ -705,6 +710,24 @@ def test_gdb_timeout_and_abnormal_exit_can_be_recovered(
             if line.startswith("START ")
         ]
         assert len(starts) == 3
+    finally:
+        _stop(tmp_path, env)
+        server.close()
+
+
+def test_halt_requires_new_stop_event(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    env = _env(monkeypatch, tmp_path)
+    env["EDBG_FAKE_GDB_NO_AUTO_STOP"] = "1"
+    env["EDBG_FAKE_GDB_NO_STOP"] = "1"
+    server = _listener()
+    try:
+        _start(tmp_path, env, server.getsockname()[1], "--gdb", str(MOCKS / "fake_gdb.py"))
+        code, resumed = _invoke(tmp_path, env, "continue", "--authorize-run")
+        assert code == 0 and resumed["target_state"] == "running"
+        code, halted = _invoke(tmp_path, env, "halt", "--authorize-run")
+        assert code == 2 and halted["error"]["code"] == "GDB_TIMEOUT"
+        code, status = _invoke(tmp_path, env, "session", "status")
+        assert code == 0 and status["target_state"] == "unknown"
     finally:
         _stop(tmp_path, env)
         server.close()

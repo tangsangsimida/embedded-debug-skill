@@ -61,6 +61,19 @@ def parser() -> argparse.ArgumentParser:
     install_cli.add_argument("--source", required=True, help="explicit pip package source")
     install_cli.add_argument("--authorize", action="store_true")
     install_cli.set_defaults(canonical_command="environment-install-cli")
+    install_tool = environment_actions.add_parser("install-tool-archive")
+    install_tool.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
+    install_tool.add_argument("--source", required=True)
+    install_tool.add_argument("--sha256", required=True)
+    install_tool.add_argument("--executable", required=True)
+    install_tool.add_argument("--kind", choices=("gdb", "openocd"), required=True)
+    install_tool.add_argument("--authorize", action="store_true")
+    install_tool.set_defaults(canonical_command="environment-install-tool-archive")
+    remove_tool = environment_actions.add_parser("remove-tool-archive")
+    remove_tool.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
+    remove_tool.add_argument("--sha256", required=True)
+    remove_tool.add_argument("--authorize", action="store_true")
+    remove_tool.set_defaults(canonical_command="environment-remove-tool-archive")
     path_add = environment_actions.add_parser("path-add")
     path_add.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     path_add.add_argument("--directory", type=Path, required=True)
@@ -82,6 +95,7 @@ def parser() -> argparse.ArgumentParser:
     connect.add_argument("--board")
     connect.add_argument("--openocd-config")
     connect.add_argument("--openocd-command", action="append", default=[])
+    connect.add_argument("--authorize-openocd-config", action="store_true")
     connect.add_argument("--elf", type=Path)
     connect.add_argument("--host")
     connect.add_argument("--gdb-port", type=int)
@@ -134,6 +148,9 @@ def parser() -> argparse.ArgumentParser:
     flash.add_argument("--authorize", action="store_true")
     flash.add_argument("--authorize-command", action="store_true")
     flash.add_argument("--elf", type=Path)
+    flash.add_argument(
+        "--task-timeout", type=float, default=300.0, help="flash task timeout in seconds"
+    )
     for action_name in ("halt", "continue", "step", "next"):
         command_parsers[action_name].add_argument(
             "--authorize-run",
@@ -145,6 +162,9 @@ def parser() -> argparse.ArgumentParser:
             ),
         )
     build = command_parser("build")
+    build.add_argument(
+        "--task-timeout", type=float, default=900.0, help="build task timeout in seconds"
+    )
     build.add_argument("--authorize-run", action="store_true")
     build.add_argument(
         "--authorize-command",
@@ -227,6 +247,7 @@ def parser() -> argparse.ArgumentParser:
         ("--board", {}),
         ("--openocd-config", {}),
         ("--openocd-command", {"action": "append", "default": []}),
+        ("--authorize-openocd-config", {"action": "store_true"}),
         ("--elf", {"type": Path}),
         ("--host", {}),
         ("--gdb-port", {"type": int}),

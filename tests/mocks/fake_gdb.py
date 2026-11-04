@@ -60,7 +60,9 @@ for line in sys.stdin:
         os._exit(42)
     if command == "-gdb-exit":
         break
-    if command.startswith("-target-select"):
+    if command == "-gdb-set mi-async on":
+        emit(f"{token}^done")
+    elif command.startswith("-target-select"):
         delay_file = os.environ.get("EDBG_FAKE_GDB_TARGET_DELAY_FILE")
         if delay_file and os.path.isfile(delay_file):
             time.sleep(60)
@@ -68,6 +70,16 @@ for line in sys.stdin:
         emit('*stopped,reason="breakpoint-hit",thread-id="1"')
     elif command == "-gdb-show architecture":
         emit(f'{token}^done,value="arm"')
+    elif command == "-test-flood":
+        for _ in range(5000):
+            emit('=thread-created,id="1"')
+        emit(f"{token}^done")
+    elif command == "-test-idle-flood":
+        emit(f"{token}^done")
+        for _ in range(10000):
+            emit('=thread-created,id="1"')
+    elif command == "-test-malformed":
+        emit(f'{token}^done,value="unterminated')
     elif command == "-data-list-register-names":
         emit(f'{token}^done,register-names=["r0","pc"]')
     elif command == "-break-list":
@@ -126,11 +138,12 @@ for line in sys.stdin:
     elif command.startswith("-exec-continue"):
         emit(f"{token}^running")
         emit('*running,thread-id="all"')
-        timer = threading.Timer(
-            0.08, lambda: emit('*stopped,reason="breakpoint-hit",thread-id="1"')
-        )
-        timer.daemon = True
-        timer.start()
+        if not os.environ.get("EDBG_FAKE_GDB_NO_AUTO_STOP"):
+            timer = threading.Timer(
+                0.08, lambda: emit('*stopped,reason="breakpoint-hit",thread-id="1"')
+            )
+            timer.daemon = True
+            timer.start()
     elif command.startswith("-exec-step") or command.startswith("-exec-next"):
         emit(f"{token}^running")
         timer = threading.Timer(
@@ -139,7 +152,8 @@ for line in sys.stdin:
         timer.daemon = True
         timer.start()
     elif command.startswith("-exec-interrupt"):
-        emit('*stopped,reason="signal-received",signal-name="SIGINT"')
+        if not os.environ.get("EDBG_FAKE_GDB_NO_STOP"):
+            emit('*stopped,reason="signal-received",signal-name="SIGINT"')
         emit(f"{token}^done")
     elif command == "-hang":
         time.sleep(60)

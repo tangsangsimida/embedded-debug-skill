@@ -14,8 +14,8 @@ from collections.abc import Sequence
 from pathlib import Path
 
 PINNED_VERSION = "0.1.0"
-SOURCE = "git+https://github.com/tangsangsimida/embedded-debug-skill.git@a1afabcfcd8d679427ef4ac090d7d29129b34802"
-PINNED_SOURCE_DIGEST = "fc813dac83d9b6c58863040f33feb081110b59c1716bba8589d1b15021c6e274"
+SOURCE = "git+https://github.com/tangsangsimida/embedded-debug-skill.git@128bf01eefe01d3135cb406f8e9c4f8f13389149"
+PINNED_SOURCE_DIGEST = "60e3b00abca85deca2d94a10d21fbe729129eee754bd5c7515d8bb6b9e72add8"
 
 
 def _matches_build_info(command: Sequence[str]) -> bool:
@@ -98,21 +98,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                 timeout=5,
                 check=False,
             )
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            print(f"Existing edbg command could not be checked: {exc}", file=sys.stderr)
-            return 2
-        existing_version = version_result.stdout.strip()
-        if version_result.returncode != 0 or existing_version != PINNED_VERSION:
-            print(
-                f"Existing edbg version {existing_version or 'unknown'} does not match "
-                f"Skill {PINNED_VERSION}; update or roll back one of them.",
-                file=sys.stderr,
-            )
-            return 2
-        if not _matches_build_info([existing_cli]):
-            print("Existing edbg source does not match this Skill candidate.", file=sys.stderr)
-            return 2
-        return subprocess.run([existing_cli, *remainder]).returncode
+        except (OSError, subprocess.TimeoutExpired):
+            version_result = None
+        if (
+            version_result is not None
+            and version_result.returncode == 0
+            and version_result.stdout.strip() == PINNED_VERSION
+            and _matches_build_info([existing_cli])
+        ):
+            return subprocess.run([existing_cli, *remainder]).returncode
 
     try:
         installed = importlib.metadata.version("embedded-debug-skill")
@@ -121,19 +115,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if installed == PINNED_VERSION:
         module = [sys.executable, "-m", "embedded_debug.cli"]
-        if not _matches_build_info(module):
-            print("Installed CLI source does not match this Skill candidate.", file=sys.stderr)
-            return 2
-        return subprocess.run([*module, *remainder]).returncode
-    if installed is not None:
-        print(
-            f"EmbeddedDebug CLI version {installed} does not match Skill {PINNED_VERSION}; "
-            "update or roll back one of them.",
-            file=sys.stderr,
-        )
-        return 2
+        if _matches_build_info(module):
+            return subprocess.run([*module, *remainder]).returncode
     cached_cli = _cached_cli()
-    if cached_cli.is_file():
+    if cached_cli.is_file() and _matches_build_info([str(cached_cli)]):
         return _run_cached(cached_cli, remainder)
     if not options.install_python_cli:
         print(
