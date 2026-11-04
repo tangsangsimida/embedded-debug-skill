@@ -1,16 +1,31 @@
 name: Skill install test
 on:
   push:
+    branches: [master]
   pull_request:
+    branches: [master]
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
   install:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os:
+          - ubuntu-24.04
+          - ubuntu-24.04-arm
+          - ubuntu-26.04
+          - windows-2022
+          - windows-2025
+          - windows-11-arm
+          - macos-15-intel
+          - macos-15
+          - macos-26
         agent: [codex, claude-code]
     steps:
       - uses: actions/checkout@v4
@@ -18,87 +33,11 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.11'
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Create isolated agent home
-        run: mkdir -p "$RUNNER_TEMP/agent-home"
-      - name: Install Skill from public GitHub repository
-        if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') }}
-        run: npx --yes skills@1.7.6 add tangsangsimida/embedded-debug-skill --skill embedded-debug --agent "${{ matrix.agent }}" --copy -g -y
+      - name: Install Skill and exercise the CLI end to end
         env:
-          HOME: ${{ runner.temp }}/agent-home
-          DISABLE_TELEMETRY: '1'
-      - name: Install pull request candidate from the checked out tree
-        if: ${{ github.event_name != 'push' || (github.ref != 'refs/heads/main' && github.ref != 'refs/heads/master') }}
-        run: npx --yes skills@1.7.6 add . --skill embedded-debug --agent "${{ matrix.agent }}" --copy -g -y
-        env:
-          HOME: ${{ runner.temp }}/agent-home
-          DISABLE_TELEMETRY: '1'
-      - name: Verify installed Skill location and resources
-        env:
-          HOME: ${{ runner.temp }}/agent-home
           SKILL_AGENT: ${{ matrix.agent }}
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          import os
-          home = Path(os.environ['HOME'])
-          root = home / ('.agents/skills/embedded-debug' if os.environ['SKILL_AGENT'] == 'codex'
-                         else '.claude/skills/embedded-debug')
-          assert (root / 'SKILL.md').is_file(), root
-          for rel in ['references/setup.md', 'references/debugging.md', 'references/hardfault.md',
-                      'references/threadx.md', 'references/safety.md', 'scripts/run_edbg.py',
-                      'scripts/check_version.py']:
-              assert (root / rel).is_file(), rel
-          text = (root / 'SKILL.md').read_text()
-          assert 'edbg doctor --json' in text
-          assert 'explicit user authorization' in text
-          assert 'scripts/run_edbg.py' in text
-          expected = Path('skills/embedded-debug')
-          for source in expected.rglob('*'):
-              if source.is_file():
-                  installed = root / source.relative_to(expected)
-                  assert installed.is_file(), source
-                  assert installed.read_bytes() == source.read_bytes(), source
-          PY
-      - name: Bootstrap CLI from the Skill's immutable source pin
-        env:
-          HOME: ${{ runner.temp }}/agent-home
-          SKILL_AGENT: ${{ matrix.agent }}
-        run: |
-          python -m venv "$RUNNER_TEMP/cli-runtime"
-          skill="$HOME/.agents/skills/embedded-debug"
-          if [ "$SKILL_AGENT" = "claude-code" ]; then
-            skill="$HOME/.claude/skills/embedded-debug"
-          fi
-          "$RUNNER_TEMP/cli-runtime/bin/python" "$skill/scripts/run_edbg.py" --install-python-cli --version
-          "$RUNNER_TEMP/cli-runtime/bin/python" "$skill/scripts/run_edbg.py" --help
-          "$RUNNER_TEMP/cli-runtime/bin/python" "$skill/scripts/run_edbg.py" --json doctor > "$RUNNER_TEMP/doctor-bootstrap.json"
-          python - <<'PY'
-          import json, os
-          data = json.load(open(os.path.join(os.environ['RUNNER_TEMP'], 'doctor-bootstrap.json')))
-          assert data['success'] is True
-          assert 'debug_tools_ready' in data['data']
-          PY
-      - name: Build and install the exact package artifact
-        run: |
-          python -m pip install -e '.[dev]'
-          python -m build
-          wheel="$(find dist -maxdepth 1 -name '*.whl' -print -quit)"
-          test -n "$wheel"
-          python -m pip install --force-reinstall "$wheel"
-          edbg --version
-          edbg --help
-          edbg doctor --json > "$RUNNER_TEMP/doctor.json"
-          python - <<'PY'
-          import json, os
-          data = json.load(open(os.path.join(os.environ['RUNNER_TEMP'], 'doctor.json')))
-          assert data['success'] is True
-          assert 'cli_ready' in data['data']
-          assert 'debug_tools_ready' in data['data']
-          PY
-          pytest
-          python skills/embedded-debug/scripts/validate_skill.py skills/embedded-debug
-          python skills/embedded-debug/scripts/check_version.py
+        run: python tests/ci/skill_install_smoke.py

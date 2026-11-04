@@ -1,0 +1,51 @@
+# Cross-platform testing
+
+## Shared checks
+
+The CI baseline is Python 3.11. On each listed runner, `ci.yml` installs the package and runs Ruff, mypy, the complete pytest suite, wheel/sdist build, `pip check`, and `pip-audit`. The suite exercises the same Python implementation on each OS, including Mock GDB/MI, Mock OpenOCD, persistent-session IPC, timeout/recovery behavior, JSON CLI output, and authorization checks.
+
+`skill-install-test.yml` installs the Skill with the Skills CLI for Codex and Claude Code in an isolated profile. It verifies the installed Skill resources, installs the CLI/package, checks `--version`, `--help`, and `doctor`, and runs the Mock test suite. This verifies installation and command contracts. It does not verify that a live language model triggers a Skill from natural language.
+
+## Verified runner matrix
+
+The current CI matrix is intentionally wider than a single runner per OS:
+
+| Platform family | CI runners | Python |
+| --- | --- | --- |
+| Linux x64 | Ubuntu 24.04, Ubuntu 26.04 | 3.11 |
+| Linux arm64 | Ubuntu 24.04 arm64 | 3.11 |
+| Windows x64 | Windows Server 2022, Windows Server 2025 | 3.11 |
+| Windows arm64 | Windows 11 arm64 | 3.11 |
+| macOS x64 | macOS 15 Intel | 3.11 |
+| macOS arm64 | macOS 15, macOS 26 | 3.11 |
+
+The CI matrix is the authoritative source for currently exercised runners. Release candidate quality checks and Codex/Claude Skills installation tests use the same runner and Python baseline. Review the exact workflow run for a candidate before claiming it passed; an older green run does not prove a later commit.
+
+## Platform-sensitive coverage
+
+- Process identity uses PID, creation time, executable, and user. Cleanup refuses a mismatched identity and terminates only the verified owned process tree.
+- Windows process startup creates a process group; cancellation uses a console control event. Native Windows CI exercises `Scripts` virtual environments, the `edbg.exe` package entry point, Windows paths, and ARM64 process scheduling through the same test suite.
+- Linux-specific `/proc` access is limited to migration of old session records. New identities use `psutil` like the other platforms.
+- macOS and Linux use the shared POSIX subprocess behavior; macOS CI covers both Intel and Apple Silicon runners.
+- IPC binds to IPv4 loopback and each request carries a per-session random token. Tests reject non-loopback endpoints and invalid session credentials.
+- File locking and user data directories use `portalocker` and `platformdirs`; tests exercise lock contention and environment overrides.
+- Paths are passed as subprocess argument arrays. Tests include Unicode and whitespace in a script path and its arguments.
+
+## Hardware boundary
+
+Hardware integration tests are opt-in with `EDBG_HARDWARE_TESTS=1` and `EDBG_HARDWARE_CONFIG`. Standard CI does not access USB probes or MCUs. Passing mocked tests proves software behavior only; it does not prove that an OpenOCD build, USB driver/permission configuration, adapter firmware, target configuration, or physical board works on a given platform. See [hardware-test-platform.md](hardware-test-platform.md) for any locally observed fixture, and re-detect it before use.
+
+## Local commands
+
+```sh
+python -m pip install -e '.[dev]'
+ruff check .
+mypy src/embedded_debug
+pytest
+python -m build
+python -m pip check
+python -m pip install --upgrade certifi
+pip-audit --skip-editable
+```
+
+On Windows PowerShell, invoke the same commands from the repository root; Python entry points installed into a virtual environment are under `Scripts`, and pytest/subprocess tests use argument arrays rather than shell-specific quoting.

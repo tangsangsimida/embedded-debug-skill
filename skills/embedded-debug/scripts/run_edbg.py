@@ -14,8 +14,8 @@ from collections.abc import Sequence
 from pathlib import Path
 
 PINNED_VERSION = "0.1.0"
-SOURCE = "git+https://github.com/tangsangsimida/embedded-debug-skill.git@3372e1134455166a36d37254e73106da4cad6e19"
-PINNED_SOURCE_DIGEST = "3cdc4e56064c9437fecdf95edd5a3aa7b43e59f37fb1b6670f286dd587c1db3c"
+SOURCE = "git+https://github.com/tangsangsimida/embedded-debug-skill.git@e3592cdffc4f5e940a28dd34174e115b7088cc3e"
+PINNED_SOURCE_DIGEST = "b5ac39dcaff73f3ab8309b615ffbfd1b477686f292723e731f248ee93141b60b"
 
 
 def _matches_build_info(command: Sequence[str]) -> bool:
@@ -24,6 +24,8 @@ def _matches_build_info(command: Sequence[str]) -> bool:
             [*command, "--json", "build-info"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=8,
             check=False,
         )
@@ -36,14 +38,37 @@ def _matches_build_info(command: Sequence[str]) -> bool:
 
 
 def _cached_cli() -> Path:
-    base = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
-    return base / "embedded-debug-skill" / PINNED_VERSION / "bin" / "edbg"
+    override = os.environ.get("EDBG_CACHE_HOME") or os.environ.get("XDG_CACHE_HOME")
+    if override:
+        base = Path(override).expanduser()
+    elif sys.platform == "win32":
+        base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData/Local"))
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library/Caches"
+    else:
+        base = Path.home() / ".cache"
+    scripts = "Scripts" if sys.platform == "win32" else "bin"
+    command = "edbg.exe" if sys.platform == "win32" else "edbg"
+    return base / "embedded-debug-skill" / PINNED_VERSION / scripts / command
+
+
+def _venv_python(cli_path: Path) -> Path:
+    root = cli_path.parent.parent
+    if sys.platform == "win32":
+        return root / "Scripts" / "python.exe"
+    return root / "bin" / "python"
 
 
 def _run_cached(cli: Path, args: Sequence[str]) -> int:
     try:
         result = subprocess.run(
-            [str(cli), "--version"], capture_output=True, text=True, timeout=5, check=False
+            [str(cli), "--version"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+            check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
         return 2
@@ -65,7 +90,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     if existing_cli:
         try:
             version_result = subprocess.run(
-                [existing_cli, "--version"], capture_output=True, text=True, timeout=5, check=False
+                [existing_cli, "--version"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=5,
+                check=False,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             print(f"Existing edbg command could not be checked: {exc}", file=sys.stderr)
@@ -107,7 +138,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not options.install_python_cli:
         print(
             "EmbeddedDebug CLI is not installed. After explicit user authorization, run:\n"
-            "  python3 skills/embedded-debug/scripts/run_edbg.py "
+            f"  {sys.executable} skills/embedded-debug/scripts/run_edbg.py "
             "--install-python-cli doctor --json",
             file=sys.stderr,
         )
@@ -121,7 +152,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             return 2
         command.extend(remainder)
-        result = subprocess.run(command, capture_output=True, text=True, check=False)
+        result = subprocess.run(
+            command, capture_output=True, text=True, encoding="utf-8", errors="replace", check=False
+        )
         if result.stderr:
             print(result.stderr, end="", file=sys.stderr)
         if result.stdout:
@@ -143,6 +176,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         [python, "-m", "venv", str(cached_cli.parent.parent)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     if create.returncode:
@@ -153,11 +188,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             file=sys.stderr,
         )
         return create.returncode
-    venv_python = cached_cli.parent / "python"
+    venv_python = _venv_python(cached_cli)
     install = subprocess.run(
-        [str(venv_python), "-m", "pip", "install", "--no-deps", SOURCE],
+        [str(venv_python), "-m", "pip", "install", SOURCE],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     if install.stdout:

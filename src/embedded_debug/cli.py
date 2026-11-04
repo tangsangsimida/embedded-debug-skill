@@ -20,16 +20,21 @@ from .doctor import doctor
 from .gdb.mi_transport import GDBError
 from .models import Envelope
 from .openocd.manager import OpenOCDError, OpenOCDManager
+from .platforms import get_platform
 from .session_manager import (
     SessionManagerError,
+    list_sessions,
     session_operation,
     session_status,
     start_session,
     stop_session,
 )
 from .session_store import (
+    current_session_name,
     daemon_identity_matches,
     read_session,
+    set_session_name,
+    validate_session_name,
 )
 
 
@@ -42,6 +47,12 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--config", type=Path, help="project TOML configuration")
     p.add_argument("--gdb", help="GDB executable override")
     p.add_argument("--openocd", help="OpenOCD executable override")
+    p.add_argument(
+        "--session",
+        type=validate_session_name,
+        default="default",
+        help="isolated persistent debug session name (default: default)",
+    )
     p.add_argument(
         "--gdb-timeout",
         type=float,
@@ -60,6 +71,7 @@ def parser() -> argparse.ArgumentParser:
             default=argparse.SUPPRESS,
             help="emit the standard JSON envelope",
         )
+        child.add_argument("--session", type=validate_session_name, default=argparse.SUPPRESS)
         return child
 
     doctor_command = command_parser("doctor", help="inspect Python and system toolchain")
@@ -189,6 +201,7 @@ def parser() -> argparse.ArgumentParser:
     session_actions = session_group.add_subparsers(dest="action", required=True)
     session_start = session_actions.add_parser("start")
     session_start.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
+    session_start.add_argument("--session", type=validate_session_name, default=argparse.SUPPRESS)
     for flag, options in (
         ("--interface", {}),
         ("--target", {}),
@@ -203,9 +216,10 @@ def parser() -> argparse.ArgumentParser:
     ):
         session_start.add_argument(flag, **options)
     session_start.set_defaults(canonical_command="session-start")
-    for action_name in ("status", "stop", "recover", "cancel"):
+    for action_name in ("list", "status", "stop", "recover", "cancel"):
         leaf = session_actions.add_parser(action_name)
         leaf.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
+        leaf.add_argument("--session", type=validate_session_name, default=argparse.SUPPRESS)
         if action_name == "recover":
             leaf.add_argument(
                 "--authorize-openocd-restart",
@@ -256,7 +270,15 @@ def _emit(envelope: Envelope, as_json: bool) -> None:
 def _run_external(
     argv: Sequence[str], cwd: Path, as_json: bool
 ) -> subprocess.CompletedProcess[str]:
-    result = subprocess.run(argv, cwd=cwd, capture_output=True, text=True, check=False)
+    result = subprocess.run(
+        argv,
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
     if as_json:
         for stream in (result.stdout, result.stderr):
             if stream:
@@ -274,11 +296,16 @@ def _run_external(
 
 
 def _audit(action: str, target: str) -> None:
-    path = Path(os.environ.get("EDBG_AUDIT_LOG", Path.home() / ".local/state/edbg/audit.jsonl"))
+    path = Path(os.environ.get("EDBG_AUDIT_LOG", get_platform().state_dir() / "audit.jsonl"))
     path.parent.mkdir(parents=True, exist_ok=True)
     from datetime import UTC, datetime
 
-    entry = {"timestamp": datetime.now(UTC).isoformat(), "action": action, "target": target}
+    entry = {
+        "timestamp": datetime.now(UTC).isoformat(),
+        "session": current_session_name(),
+        "action": action,
+        "target": target,
+    }
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
@@ -458,6 +485,7 @@ def _daemon_settings(settings: dict[str, Any]) -> dict[str, Any]:
 def run(argv: Sequence[str] | None = None) -> int:
     p = parser()
     args = p.parse_args(argv)
+    set_session_name(args.session)
     name = getattr(args, "canonical_command", args.command)
     try:
         cfg = _config(args)
@@ -538,6 +566,12 @@ def run(argv: Sequence[str] | None = None) -> int:
                 args.json,
             )
             return 0 if "error" not in data else 2
+        if name == "session-list":
+            _emit(
+                Envelope(name, True, data={"sessions": list_sessions()}),
+                args.json,
+            )
+            return 0
         if name == "session-stop":
             data = stop_session()
             _emit(Envelope(name, True, data=data, target_state="disconnected"), args.json)

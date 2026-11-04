@@ -22,7 +22,8 @@ def digest_worktree(root: Path) -> str:
     package = root / "src/embedded_debug"
     for path in sorted(package.rglob("*.py")):
         relative = path.relative_to(package).as_posix().encode()
-        digest.update(relative + b"\0" + path.read_bytes() + b"\0")
+        content = path.read_bytes().replace(b"\r\n", b"\n")
+        digest.update(relative + b"\0" + content + b"\0")
     return digest.hexdigest()
 
 

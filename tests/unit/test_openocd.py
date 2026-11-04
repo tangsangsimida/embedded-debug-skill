@@ -1,3 +1,5 @@
+import sys
+
 from embedded_debug.openocd.manager import OpenOCDManager
 
 
@@ -14,9 +16,8 @@ def test_openocd_start_failure_is_reported_and_reaped(tmp_path, monkeypatch) -> 
 
     from embedded_debug.openocd.manager import OpenOCDError
 
-    fake = tmp_path / "openocd-fail"
-    fake.write_text("#!/bin/sh\nexit 9\n")
-    fake.chmod(0o755)
+    fake = tmp_path / "openocd-fail.py"
+    fake.write_text(f"#!{sys.executable}\nraise SystemExit(9)\n")
     monkeypatch.setattr("embedded_debug.openocd.manager.OpenOCDManager.port_open", lambda *a: False)
     manager = OpenOCDManager(str(fake), log_file=tmp_path / "openocd.log")
     with pytest.raises(OpenOCDError, match="status 9"):

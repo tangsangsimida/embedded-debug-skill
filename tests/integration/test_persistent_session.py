@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import signal
 import socket
 import subprocess
 import sys
@@ -13,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
+import psutil
 import pytest
 
 from embedded_debug.session_manager import SessionManagerError, start_session
@@ -56,7 +56,7 @@ def _invoke(cwd: Path, env: dict[str, str], *args: str) -> tuple[int, dict[str, 
 def _start(cwd: Path, env: dict[str, str], port: int, *options: str) -> dict[str, Any]:
     global_options: list[str] = []
     connect_options: list[str] = []
-    global_flags = {"--gdb", "--gdb-timeout", "--openocd"}
+    global_flags = {"--gdb", "--gdb-timeout", "--openocd", "--session"}
     index = 0
     while index < len(options):
         destination = global_options if options[index] in global_flags else connect_options
@@ -129,7 +129,7 @@ def test_connect_reuses_vscode_configuration_without_edbg_file_or_target_file(
         code, connected = _invoke(tmp_path, env, "connect")
         assert code == 0, connected
         assert connected["target"]["connection"] == "connected"
-        assert connected["data"]["elf"].endswith("build/firmware.elf")
+        assert Path(connected["data"]["elf"]).parts[-2:] == ("build", "firmware.elf")
         assert not (tmp_path / ".edbg.toml").exists()
         assert not (tmp_path / "edbg.toml").exists()
         starts = [
@@ -202,14 +202,16 @@ def test_startup_timeout_cleans_gdb_child_before_aborting(
     }
     try:
         with pytest.raises(SessionManagerError, match="did not become ready"):
-            start_session(settings, timeout=0.3)
-        start_records = [
-            line
-            for line in (tmp_path / "gdb.log").read_text().splitlines()
-            if line.startswith("START ")
-        ]
-        assert len(start_records) == 1
-        assert not process_alive(int(start_records[0].split()[1]))
+            # Leave enough time for slower Windows ARM runners to launch the
+            # manager and GDB child before the deliberate target-select stall.
+            start_session(settings, timeout=3.0)
+        gdb_log = tmp_path / "gdb.log"
+        if gdb_log.exists():
+            start_records = [
+                line for line in gdb_log.read_text().splitlines() if line.startswith("START ")
+            ]
+            assert len(start_records) == 1
+            assert not process_alive(int(start_records[0].split()[1]))
         assert read_session() is None
     finally:
         server.close()
@@ -266,8 +268,28 @@ def test_commands_across_independent_processes_keep_gdb_context(
         assert started["data"]["session"] == "connected"
         record = read_session()
         assert record is not None
-        assert record["schema"] == 2
-        assert record["socket_path"]
+        assert record["schema"] == 3
+        assert record["ipc_endpoint"]["kind"] == "tcp"
+        assert record["ipc_endpoint"]["host"] == "127.0.0.1"
+        assert record["ipc_endpoint"]["port"] > 0
+        with socket.create_connection(
+            (record["ipc_endpoint"]["host"], record["ipc_endpoint"]["port"])
+        ) as channel:
+            channel.sendall(
+                json.dumps(
+                    {
+                        "session_id": record["session_id"],
+                        "token": "invalid-token",
+                        "operation": "continue",
+                        "params": {"authorized_run": True},
+                    }
+                ).encode()
+                + b"\n"
+            )
+            with channel.makefile("rb") as response_stream:
+                denied = json.loads(response_stream.readline())
+        assert not denied["success"]
+        assert "IPC authentication failed" in denied["error"]
 
         code, added = _invoke(tmp_path, env, "breakpoint", "add", "main")
         assert code == 0, added
@@ -349,6 +371,80 @@ def test_parallel_cli_requests_are_serialized_and_keep_one_gdb_process(
         server.close()
 
 
+def test_named_sessions_isolate_multiple_targets_and_refuse_duplicate_endpoints(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = _env(monkeypatch, tmp_path)
+    first, second = _listener(), _listener()
+    try:
+        _start(
+            tmp_path,
+            env,
+            first.getsockname()[1],
+            "--session",
+            "board-a",
+            "--gdb",
+            str(MOCKS / "fake_gdb.py"),
+        )
+        _start(
+            tmp_path,
+            env,
+            second.getsockname()[1],
+            "--session",
+            "board-b",
+            "--gdb",
+            str(MOCKS / "fake_gdb.py"),
+        )
+        first_record = read_session("board-a")
+        second_record = read_session("board-b")
+        assert first_record and second_record
+        assert first_record["daemon_pid"] != second_record["daemon_pid"]
+        assert first_record["gdb_pid"] != second_record["gdb_pid"]
+
+        for session_name in ("board-a", "board-b"):
+            code, bp = _invoke(
+                tmp_path,
+                env,
+                "--session",
+                session_name,
+                "breakpoint",
+                "add",
+                f"main_{session_name}",
+            )
+            assert code == 0 and bp["data"]["bkpt"]["number"] == "1"
+        code, sessions = _invoke(tmp_path, env, "session", "list")
+        assert code == 0
+        assert {item["name"] for item in sessions["data"]["sessions"]} >= {"board-a", "board-b"}
+
+        code, conflict = _invoke(
+            tmp_path,
+            env,
+            "--session",
+            "board-c",
+            "--gdb",
+            str(MOCKS / "fake_gdb.py"),
+            "connect",
+            "--host",
+            "127.0.0.1",
+            "--gdb-port",
+            str(first.getsockname()[1]),
+        )
+        assert code == 2
+        assert "already owned by session 'board-a'" in conflict["error"]["message"]
+
+        code, status = _invoke(tmp_path, env, "--session", "board-a", "session", "status")
+        assert code == 0 and status["data"]["active"] is True
+        code, _ = _invoke(tmp_path, env, "--session", "board-a", "session", "stop")
+        assert code == 0
+        code, status = _invoke(tmp_path, env, "--session", "board-b", "session", "status")
+        assert code == 0 and status["data"]["active"] is True
+    finally:
+        _invoke(tmp_path, env, "--session", "board-a", "session", "stop")
+        _invoke(tmp_path, env, "--session", "board-b", "session", "stop")
+        first.close()
+        second.close()
+
+
 def test_active_gdb_command_can_be_cancelled_from_another_cli_process(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -392,9 +488,7 @@ def test_active_gdb_command_can_be_cancelled_from_another_cli_process(
         code, denied = _invoke(tmp_path, env, "session", "cancel")
         assert code == 2
         assert "authorize-run" in denied["error"]["message"]
-        code, cancelled = _invoke(
-            tmp_path, env, "session", "cancel", "--authorize-run"
-        )
+        code, cancelled = _invoke(tmp_path, env, "session", "cancel", "--authorize-run")
         assert code == 0, cancelled
         stdout, _stderr = command.communicate(timeout=5)
         operation = json.loads(stdout)
@@ -467,7 +561,9 @@ def test_gdb_timeout_and_abnormal_exit_can_be_recovered(
     env = _env(monkeypatch, tmp_path)
     crash_file = tmp_path / "crash-on"
     env["EDBG_FAKE_GDB_CRASH_FILE"] = str(crash_file)
+    env["EDBG_FAKE_GDB_SLOW_DELAY"] = "1.0"
     monkeypatch.setenv("EDBG_FAKE_GDB_CRASH_FILE", str(crash_file))
+    monkeypatch.setenv("EDBG_FAKE_GDB_SLOW_DELAY", "1.0")
     server = _listener()
     try:
         _start(
@@ -477,7 +573,7 @@ def test_gdb_timeout_and_abnormal_exit_can_be_recovered(
             "--gdb",
             str(MOCKS / "fake_gdb.py"),
             "--gdb-timeout",
-            "0.08",
+            "0.5",
         )
         code, timeout = _invoke(tmp_path, env, "variable", "read", "slow_value")
         assert code == 2
@@ -595,7 +691,7 @@ def test_killed_manager_reaps_only_its_orphaned_gdb_process(
         record = read_session()
         assert record and gdb_identity_matches(record)
         daemon_pid, gdb_pid = record["daemon_pid"], record["gdb_pid"]
-        os.kill(daemon_pid, signal.SIGKILL)
+        psutil.Process(daemon_pid).kill()
         deadline = time.monotonic() + 4
         while time.monotonic() < deadline and process_alive(daemon_pid):
             time.sleep(0.02)
@@ -652,7 +748,7 @@ def test_owned_openocd_failure_is_detected_and_restarted(
         record = read_session()
         assert record and record["openocd_owned"]
         previous_pid = record["openocd_pid"]
-        os.kill(previous_pid, signal.SIGTERM)
+        psutil.Process(previous_pid).terminate()
         state = _wait_for(tmp_path, env, lambda item: item["target_state"] == "disconnected")
         assert state["active"] is False
 

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import fcntl
 import json
 import os
 import signal
@@ -17,12 +16,15 @@ from typing import Any
 from .gdb.controller import GDBController
 from .gdb.mi_transport import GDBError, GDBTimeout, MITransport
 from .openocd.manager import OpenOCDError, OpenOCDManager
+from .platforms import get_platform
 from .session_store import (
     clear_session,
+    current_session_name,
     process_start_time,
     read_session,
     save_session,
     session_dir,
+    set_session_name,
 )
 
 
@@ -35,7 +37,9 @@ class DebugSessionDaemon:
         self.session_id = session_id
         self.settings = settings
         self.lock_handle: Any = None
+        self.lock_acquired = False
         self.server: socket.socket | None = None
+        self.ipc_endpoint: dict[str, object] | None = None
         self.stopping = threading.Event()
         self._operation_lock = threading.Lock()
         self._client_lock = threading.Lock()
@@ -56,12 +60,17 @@ class DebugSessionDaemon:
     def start(self) -> None:
         root = session_dir()
         root.mkdir(parents=True, exist_ok=True, mode=0o700)
-        root.chmod(0o700)
+        try:
+            root.chmod(0o700)
+        except OSError:
+            pass
         lock_path = root / "manager.lock"
         self.lock_handle = lock_path.open("a+")
         try:
-            fcntl.flock(self.lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
+            get_platform().lock_file(self.lock_handle, non_blocking=True)
+            self.lock_acquired = True
+            print("session daemon lock acquired", file=sys.stderr, flush=True)
+        except (BlockingIOError, OSError) as exc:
             raise SessionFailure(
                 "Another debug session manager already owns this user session"
             ) from exc
@@ -75,28 +84,38 @@ class DebugSessionDaemon:
             config_files=self.settings.get("config_files", []),
             extra_args=self.settings.get("server_args", []),
         )
+        print("session daemon OpenOCD ready", file=sys.stderr, flush=True)
         if self.stopping.is_set():
             raise SessionFailure("Session shutdown requested during OpenOCD startup")
         self._connect_gdb()
+        print("session daemon GDB connected", file=sys.stderr, flush=True)
         if self.stopping.is_set():
             raise SessionFailure("Session shutdown requested during GDB startup")
-        socket_path = root / "debug-session.sock"
-        socket_path.unlink(missing_ok=True)
-        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        server.bind(str(socket_path))
-        socket_path.chmod(0o600)
-        server.listen(8)
-        server.settimeout(0.25)
+        server, endpoint = get_platform().create_ipc_server()
         self.server = server
+        self.ipc_endpoint = endpoint
+        print("session daemon IPC ready", file=sys.stderr, flush=True)
+        daemon_identity = get_platform().process_identity(os.getpid())
+        if daemon_identity is None:
+            raise SessionFailure("Could not verify the session daemon process identity")
+        gdb_identity = (
+            get_platform().process_identity(self.transport.process.pid)
+            if self.transport.process
+            else None
+        )
+        if gdb_identity is None:
+            raise SessionFailure("Could not verify the GDB process identity")
         save_session(
             {
-                "schema": 2,
+                "schema": 3,
                 "session_id": self.session_id,
+                "session_name": current_session_name(),
                 "token": self.settings["token"],
                 "daemon_pid": os.getpid(),
-                "process_start_time": process_start_time(os.getpid()),
-                "socket_path": str(socket_path),
-                "python_executable": str(Path(sys.executable).resolve()),
+                "process_start_time": daemon_identity.created,
+                "ipc_endpoint": endpoint,
+                "python_executable": daemon_identity.executable,
+                "daemon_username": daemon_identity.username,
                 "host": self.settings["host"],
                 "gdb_port": int(self.settings["gdb_port"]),
                 "gdb_executable": self.settings["gdb_executable"],
@@ -118,12 +137,9 @@ class DebugSessionDaemon:
                 ),
                 "openocd_owned": self.manager.process is not None,
                 "gdb_pid": self.transport.process.pid if self.transport.process else None,
-                "gdb_process_executable": self.transport.process_executable,
-                "gdb_start_time": (
-                    process_start_time(self.transport.process.pid)
-                    if self.transport.process
-                    else None
-                ),
+                "gdb_process_executable": gdb_identity.executable,
+                "gdb_start_time": gdb_identity.created,
+                "gdb_username": gdb_identity.username,
                 "created_at": datetime.now(UTC).isoformat(),
             }
         )
@@ -229,9 +245,10 @@ class DebugSessionDaemon:
     def _recover(self, *, authorize_openocd_restart: bool) -> dict[str, Any]:
         self.transport.close()
         if self.manager.process is None or self.manager.process.poll() is not None:
-            if not OpenOCDManager.port_open(
-                self.settings["host"], int(self.settings["gdb_port"])
-            ) and not authorize_openocd_restart:
+            if (
+                not OpenOCDManager.port_open(self.settings["host"], int(self.settings["gdb_port"]))
+                and not authorize_openocd_restart
+            ):
                 raise PermissionError(
                     "OpenOCD is unavailable; pass --authorize-openocd-restart before "
                     "starting the configured server"
@@ -328,6 +345,7 @@ class DebugSessionDaemon:
                 "success": True,
                 "data": {
                     "active": connected,
+                    "session_name": current_session_name(),
                     "target_link": link_state,
                     "target_link_error": link_error,
                     "target": self.target,
@@ -504,8 +522,6 @@ class DebugSessionDaemon:
         if self.server:
             self.server.close()
             self.server = None
-        socket_path = session_dir() / "debug-session.sock"
-        socket_path.unlink(missing_ok=True)
         with self._client_lock:
             clients = list(self._client_threads)
         for worker in clients:
@@ -514,6 +530,9 @@ class DebugSessionDaemon:
         self.transport.close()
         self.manager.stop()
         clear_session(self.session_id)
+        if self.lock_handle and self.lock_acquired:
+            get_platform().unlock_file(self.lock_handle)
+            self.lock_acquired = False
         if self.lock_handle:
             self.lock_handle.close()
             self.lock_handle = None
@@ -522,9 +541,12 @@ class DebugSessionDaemon:
 def _main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--session-id", required=True)
+    parser.add_argument("--session-name", default="default")
     parser.add_argument("--settings", type=Path, required=True)
     args = parser.parse_args()
+    set_session_name(args.session_name)
     settings = json.loads(args.settings.read_text(encoding="utf-8"))
+    print("session daemon settings loaded", file=sys.stderr, flush=True)
     daemon = DebugSessionDaemon(args.session_id, settings)
 
     def stop_handler(_signum: int, _frame: Any) -> None:

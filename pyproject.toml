@@ -11,11 +11,19 @@ requires-python = ">=3.11"
 license = "MIT"
 authors = [{name = "EmbeddedDebug-Skill contributors"}]
 keywords = ["embedded", "debugging", "openocd", "gdb-mi", "agent-skill"]
-classifiers = ["Development Status :: 3 - Alpha", "Programming Language :: Python :: 3", "Operating System :: POSIX :: Linux"]
-dependencies = []
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Programming Language :: Python :: 3",
+  "Operating System :: OS Independent",
+]
+dependencies = [
+  "platformdirs>=4.3",
+  "portalocker>=2.10",
+  "psutil>=6.1",
+]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "ruff>=0.9", "mypy>=1.14", "build>=1.2", "pip-audit>=2.7", "setuptools>=84.1.0"]
+dev = ["pytest>=8", "ruff>=0.9", "mypy>=1.14", "build>=1.2", "pip-audit>=2.7", "setuptools>=84.1.0", "types-psutil>=7.0"]
 
 [project.scripts]
 edbg = "embedded_debug.cli:main"

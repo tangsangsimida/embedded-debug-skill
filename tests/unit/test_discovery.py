@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 from embedded_debug.discovery import discover_project, openocd_launch_options
 
@@ -31,7 +32,7 @@ def test_discovers_vscode_openocd_and_elf(tmp_path: Path, monkeypatch) -> None:
     assert options["config_files"] == ["interface/custom.cfg", "target/custom.cfg"]
     assert options["host"] == "localhost"
     assert options["gdb_port"] == 3338
-    assert result["elf_candidates"][0]["path"].endswith("build/app.elf")
+    assert Path(result["elf_candidates"][0]["path"]).parts[-2:] == ("build", "app.elf")
 
 
 def test_discovers_build_without_edbg_config(tmp_path: Path, monkeypatch) -> None:
@@ -98,16 +99,47 @@ def test_discovers_openocd_command_arguments_and_gdb_path(tmp_path: Path, monkey
 
 def test_discovers_literal_openocd_command_from_makefile(tmp_path: Path, monkeypatch) -> None:
     (tmp_path / "Makefile").write_text(
-        'debug-server:\n\t@openocd -f interface/cmsis-dap.cfg '
+        "debug-server:\n\t@openocd -f interface/cmsis-dap.cfg "
         '-f board/custom.cfg -c "gdb_port 4555"\n',
         encoding="utf-8",
     )
     monkeypatch.setattr("embedded_debug.discovery.OpenOCDManager.port_open", lambda *a: False)
     result = discover_project(tmp_path)
+    assert len(result["openocd_candidates"]) == 1, [
+        item["source"] for item in result["openocd_candidates"]
+    ]
     options = openocd_launch_options(result)
     assert options["config_files"] == ["interface/cmsis-dap.cfg", "board/custom.cfg"]
     assert options["gdb_port"] == 4555
     assert result["openocd_candidates"][0]["source"].endswith("Makefile:2")
+
+
+def test_deduplicates_case_insensitive_makefile_aliases(tmp_path: Path, monkeypatch) -> None:
+    (tmp_path / "Makefile").write_text(
+        "debug-server:\n\t@openocd -f interface/cmsis-dap.cfg\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        "embedded_debug.discovery.os.path.samefile",
+        lambda left, right: Path(left).name.casefold() == Path(right).name.casefold() == "makefile",
+    )
+    monkeypatch.setattr("embedded_debug.discovery.OpenOCDManager.port_open", lambda *a: False)
+    result = discover_project(tmp_path)
+    options = openocd_launch_options(result)
+    assert len(result["openocd_candidates"]) == 1
+    assert options["config_files"] == ["interface/cmsis-dap.cfg"]
+
+
+def test_makefile_alias_dedup_uses_platform_path_normalization(
+    tmp_path: Path, monkeypatch
+) -> None:
+    (tmp_path / "Makefile").write_text(
+        "debug-server:\n\t@openocd -f interface/cmsis-dap.cfg\n", encoding="utf-8"
+    )
+    monkeypatch.setattr("embedded_debug.discovery.os.path.normcase", str.casefold)
+    monkeypatch.setattr("embedded_debug.discovery.Path.samefile", lambda *_: False)
+    monkeypatch.setattr("embedded_debug.discovery.OpenOCDManager.port_open", lambda *a: False)
+    result = discover_project(tmp_path)
+    assert len(result["openocd_candidates"]) == 1
 
 
 def test_does_not_guess_interpolated_openocd_script_arguments(tmp_path: Path, monkeypatch) -> None:
@@ -120,3 +152,40 @@ def test_does_not_guess_interpolated_openocd_script_arguments(tmp_path: Path, mo
     result = discover_project(tmp_path)
     assert result["openocd_candidates"][0]["requires_review"] is True
     assert openocd_launch_options(result) == {}
+
+
+def test_discovers_nonstandard_openocd_loopback_listener(tmp_path: Path, monkeypatch) -> None:
+    address = SimpleNamespace(ip="127.0.0.1", port=4556)
+    listener = SimpleNamespace(status="LISTEN", laddr=address)
+    process = SimpleNamespace(
+        info={"name": "openocd"},
+        net_connections=lambda **_: [listener],
+    )
+    monkeypatch.setattr("embedded_debug.discovery.psutil.process_iter", lambda *_: [process])
+    monkeypatch.setattr(
+        "embedded_debug.discovery.psutil.Process",
+        lambda pid: SimpleNamespace(exe=lambda: "/tools/openocd"),
+    )
+    monkeypatch.setattr(
+        "embedded_debug.discovery.OpenOCDManager.port_open",
+        lambda host, port: port == 4556,
+    )
+    result = discover_project(tmp_path)
+    assert result["active_gdb_servers"] == [
+        {"host": "127.0.0.1", "port": 4556, "status": "reachable"}
+    ]
+
+
+def test_discovers_existing_make_and_cmake_flash_targets(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("embedded_debug.discovery.OpenOCDManager.port_open", lambda *a: False)
+    (tmp_path / "Makefile").write_text("all:\n\t@echo build\nflash:\n\t@openocd\n")
+    result = discover_project(tmp_path)
+    assert result["flash"]["argv"] == ["make", "flash"]
+
+    (tmp_path / "Makefile").unlink()
+    (tmp_path / "CMakeLists.txt").write_text(
+        "project(example)\nadd_custom_target(flash COMMAND openocd)\n"
+    )
+    (tmp_path / "build").mkdir()
+    result = discover_project(tmp_path)
+    assert result["flash"]["argv"] == ["cmake", "--build", "build", "--target", "flash"]

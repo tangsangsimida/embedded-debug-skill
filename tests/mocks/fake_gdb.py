@@ -20,6 +20,8 @@ def request_cancel(_signum, _frame) -> None:
 
 
 signal.signal(signal.SIGINT, request_cancel)
+if hasattr(signal, "SIGBREAK"):
+    signal.signal(signal.SIGBREAK, request_cancel)
 
 
 def emit(line: str) -> None:
@@ -103,7 +105,7 @@ for line in sys.stdin:
             emit(f'{token}^error,msg="interrupted"')
             continue
         if "slow" in command:
-            time.sleep(0.3)
+            time.sleep(float(os.environ.get("EDBG_FAKE_GDB_SLOW_DELAY", "0.3")))
         value = "42" if "fast" not in command else "7"
         emit(f'{token}^done,value="{value}"')
     elif command == "-stack-list-frames":

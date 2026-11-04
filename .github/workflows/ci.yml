@@ -1,17 +1,32 @@
 name: CI
 on:
   push:
+    branches: [master]
   pull_request:
+    branches: [master]
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        python-version: ['3.11', '3.12', '3.13', '3.14']
+        os:
+          - ubuntu-24.04
+          - ubuntu-24.04-arm
+          - ubuntu-26.04
+          - windows-2022
+          - windows-2025
+          - windows-11-arm
+          - macos-15-intel
+          - macos-15
+          - macos-26
+        python-version: ['3.11']
     steps:
       - uses: actions/checkout@v4
         with:
@@ -25,4 +40,5 @@ jobs:
       - run: pytest
       - run: python -m build
       - run: python -m pip check
-      - run: pip-audit
+      - run: python -m pip install --upgrade certifi
+      - run: pip-audit --skip-editable

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import queue
 import shutil
-import signal
 import subprocess
 import sys
 import threading
@@ -13,6 +12,7 @@ from collections import deque
 from collections.abc import Sequence
 from pathlib import Path
 
+from ..platforms import get_platform
 from .mi_parser import MIRecord, parse_record
 
 
@@ -48,15 +48,12 @@ class MITransport:
         if executable is None:
             raise GDBError(f"GDB executable not found: {self.executable}")
         executable_path = Path(executable)
-        python_script = executable_path.suffix == ".py" and not (
-            executable_path.stat().st_mode & 0o111
-        )
+        python_script = executable_path.suffix.casefold() == ".py"
         process_executable = sys.executable if python_script else executable
         self.process_executable = str(Path(process_executable).resolve())
-        if python_script:
-            args = [sys.executable, executable, "--interpreter=mi2", "--quiet", *extra_args]
-        else:
-            args = [executable, "--interpreter=mi2", "--quiet", *extra_args]
+        args = get_platform().executable_argv(
+            executable, "--interpreter=mi2", "--quiet", *extra_args
+        )
         if elf:
             args.append(str(elf))
         self.process = subprocess.Popen(
@@ -65,13 +62,14 @@ class MITransport:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             bufsize=1,
+            **get_platform().creation_options(),
         )
-        proc_executable = Path(f"/proc/{self.process.pid}/exe")
-        try:
-            self.process_executable = str(proc_executable.resolve(strict=True))
-        except OSError:
-            pass
+        identity = get_platform().process_identity(self.process.pid)
+        if identity is not None:
+            self.process_executable = identity.executable
         self.state = "unknown"
         self._reader = threading.Thread(target=self._read_stdout, daemon=True)
         self._reader.start()
@@ -180,7 +178,10 @@ class MITransport:
         if self._lock.acquire(blocking=False):
             self._lock.release()
             raise GDBError("No in-flight GDB/MI operation is available to cancel")
-        self.process.send_signal(signal.SIGINT)
+        try:
+            get_platform().interrupt_debugger(self.process)
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise GDBError(f"Could not interrupt GDB process: {exc}") from exc
         self.state = "unknown"
 
     def reconnect(self, elf: str | Path | None = None, extra_args: Sequence[str] = ()) -> None:

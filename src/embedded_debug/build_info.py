@@ -16,7 +16,8 @@ def source_digest(package_dir: Path | None = None) -> str:
         if "__pycache__" in path.parts:
             continue
         relative = path.relative_to(root).as_posix().encode()
-        digest.update(relative + b"\0" + path.read_bytes() + b"\0")
+        content = path.read_bytes().replace(b"\r\n", b"\n")
+        digest.update(relative + b"\0" + content + b"\0")
     return digest.hexdigest()
 
 

@@ -4,45 +4,49 @@ from __future__ import annotations
 
 import json
 import os
-import select
-import signal
-import time
+import re
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
+from .platforms import get_platform
 
-def session_dir() -> Path:
-    state_home = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state"))
-    return state_home / "edbg"
+_SESSION_NAME: ContextVar[str] = ContextVar("embedded_debug_session", default="default")
+_SESSION_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
 
 
-def session_path() -> Path:
-    return session_dir() / "session.json"
+def validate_session_name(value: str) -> str:
+    if not _SESSION_NAME_PATTERN.fullmatch(value):
+        raise ValueError("Session name must be 1-64 letters, digits, dots, underscores, or hyphens")
+    return value
+
+
+def set_session_name(value: str) -> None:
+    _SESSION_NAME.set(validate_session_name(value))
+
+
+def current_session_name() -> str:
+    return _SESSION_NAME.get()
+
+
+def session_dir(name: str | None = None) -> Path:
+    selected = validate_session_name(name or current_session_name())
+    root = get_platform().state_dir()
+    return root if selected == "default" else root / "sessions" / selected
+
+
+def session_path(name: str | None = None) -> Path:
+    return session_dir(name) / "session.json"
 
 
 def process_start_time(pid: int) -> str | None:
-    """Return Linux /proc start ticks, resilient to spaces in the process name."""
-    try:
-        stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
-        fields_after_comm = stat[stat.rfind(")") + 2 :].split()
-        return fields_after_comm[19]  # field 22 (starttime), field 3 is index zero
-    except (OSError, IndexError):
-        return None
+    """Return a cross-platform process creation identity."""
+    identity = get_platform().process_identity(pid)
+    return identity.created if identity else None
 
 
 def process_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except OSError:
-        return False
-    state_path = Path(f"/proc/{pid}/stat")
-    if state_path.is_file():
-        try:
-            stat = state_path.read_text(encoding="utf-8")
-            return stat[stat.rfind(")") + 2 :].split()[0] != "Z"
-        except (OSError, IndexError):
-            return False
-    return True
+    return get_platform().process_is_running(pid)
 
 
 def _process_identity(
@@ -55,47 +59,76 @@ def _process_identity(
         return "stale"
     if not process_alive(pid):
         return "stale"
-    start_time = process_start_time(pid)
-    if start_time is None:
-        return "unknown"
-    if start_time != str(info.get(start_key)):
-        return "stale"
-    try:
-        uid_line = next(
-            line
-            for line in Path(f"/proc/{pid}/status").read_text().splitlines()
-            if line.startswith("Uid:")
-        )
-        if int(uid_line.split()[1]) != os.getuid():
-            return "stale"
-        actual_executable = str(Path(f"/proc/{pid}/exe").resolve(strict=True))
-    except (OSError, StopIteration, ValueError, IndexError):
+    platform = get_platform()
+    identity = platform.process_identity(pid)
+    if identity is None:
         return "unknown"
     expected_executable = info.get(executable_key)
     if not isinstance(expected_executable, str) or not expected_executable:
         return "unknown"
-    try:
-        if actual_executable != str(Path(expected_executable).resolve(strict=True)):
-            return "stale"
-    except OSError:
-        return "unknown"
+    if not platform.is_current_user(identity.username):
+        return "stale"
+    if identity.created != str(info.get(start_key)) and info.get("schema") == 2:
+        legacy_match = platform.legacy_process_identity_matches(
+            pid=pid,
+            created=info.get(start_key),
+            executable=expected_executable,
+        )
+        return "match" if legacy_match is True else "stale" if legacy_match is False else "unknown"
+    username_key = f"{pid_key.removesuffix('_pid')}_username"
+    if not platform.identity_matches(
+        identity,
+        pid=pid,
+        created=info.get(start_key),
+        executable=expected_executable,
+        username=info.get(username_key),
+    ):
+        return "stale"
     return "match"
 
 
 def daemon_identity_status(info: dict[str, Any]) -> str:
-    status = _process_identity(
-        info, "daemon_pid", "process_start_time", "python_executable"
-    )
+    status = _process_identity(info, "daemon_pid", "process_start_time", "python_executable")
     if status != "match":
         return status
-    pid = int(info["daemon_pid"])
-    try:
-        argv = Path(f"/proc/{pid}/cmdline").read_bytes().decode(errors="replace").split("\0")
-    except OSError:
+    identity = get_platform().process_identity(int(info["daemon_pid"]))
+    if identity is None:
         return "unknown"
+    argv = identity.command_line
     if "embedded_debug.session_daemon" not in argv or str(info.get("session_id")) not in argv:
         return "stale"
     return "match"
+
+
+def daemon_identity_diagnostic(info: dict[str, Any]) -> str:
+    """Explain why an existing daemon record is not trusted during startup."""
+    try:
+        pid = int(info["daemon_pid"])
+    except (KeyError, TypeError, ValueError):
+        return "daemon PID is missing or invalid"
+    identity = get_platform().process_identity(pid)
+    if identity is None:
+        return "operating system did not provide process identity"
+    expected_created = info.get("process_start_time")
+    if identity.created != str(expected_created):
+        return "process creation time does not match the session record"
+    expected_executable = info.get("python_executable")
+    if not isinstance(expected_executable, str) or not expected_executable:
+        return "Python executable is missing from the session record"
+    if not get_platform().identity_matches(
+        identity,
+        pid=pid,
+        created=expected_created,
+        executable=expected_executable,
+        username=info.get("daemon_username"),
+    ):
+        return "process executable or user does not match the session record"
+    argv = identity.command_line
+    if "embedded_debug.session_daemon" not in argv:
+        return "process command line does not identify the EmbeddedDebug daemon"
+    if str(info.get("session_id")) not in argv:
+        return "process command line has a different session ID"
+    return "identity verified"
 
 
 def daemon_identity_matches(info: dict[str, Any]) -> bool:
@@ -107,19 +140,19 @@ def daemon_identity_is_stale(info: dict[str, Any]) -> bool:
 
 
 def openocd_identity_matches(info: dict[str, Any]) -> bool:
-    return _process_identity(
-        info, "openocd_pid", "openocd_start_time", "openocd_process_executable"
-    ) == "match"
+    return (
+        _process_identity(info, "openocd_pid", "openocd_start_time", "openocd_process_executable")
+        == "match"
+    )
 
 
 def gdb_identity_matches(info: dict[str, Any]) -> bool:
-    if _process_identity(info, "gdb_pid", "gdb_start_time", "gdb_process_executable") != "match":
-        return False
-    try:
-        argv = Path(f"/proc/{int(info['gdb_pid'])}/cmdline").read_bytes().decode().split("\0")
-    except (OSError, TypeError, ValueError, KeyError):
-        return False
-    return "--interpreter=mi2" in argv
+    # PID, creation time, executable, and user identify the exact child process.
+    # Requiring a readable argv is not portable: macOS may omit process arguments.
+    return (
+        _process_identity(info, "gdb_pid", "gdb_start_time", "gdb_process_executable")
+        == "match"
+    )
 
 
 def _terminate_verified_process(
@@ -134,32 +167,11 @@ def _terminate_verified_process(
         pid = int(info[pid_key])
     except (KeyError, TypeError, ValueError):
         return False
-    pidfd: int | None = None
-    try:
-        if hasattr(os, "pidfd_open"):
-            pidfd = os.pidfd_open(pid)
-        if not identity_check(info):
-            return False
-        if pidfd is not None and hasattr(signal, "pidfd_send_signal"):
-            signal.pidfd_send_signal(pidfd, signal.SIGTERM)
-            readable, _, _ = select.select([pidfd], [], [], timeout)
-            if readable:
-                return True
-            signal.pidfd_send_signal(pidfd, signal.SIGKILL)
-            readable, _, _ = select.select([pidfd], [], [], timeout)
-            return bool(readable)
-        os.kill(pid, signal.SIGTERM)
-        if wait_process_exit(pid, timeout):
-            return True
-        if _process_identity(info, pid_key, start_key, executable_key) != "match":
-            return False
-        os.kill(pid, signal.SIGKILL)
-        return wait_process_exit(pid, timeout)
-    except (OSError, ProcessLookupError):
-        return not process_alive(pid)
-    finally:
-        if pidfd is not None:
-            os.close(pidfd)
+    if not identity_check(info):
+        return False
+    return get_platform().terminate_process_tree(
+        pid, timeout, expected_identity=get_platform().process_identity(pid)
+    )
 
 
 def stop_stale_owned_openocd(info: dict[str, Any], timeout: float = 3.0) -> bool:
@@ -188,9 +200,9 @@ def stop_stale_owned_gdb(info: dict[str, Any], timeout: float = 3.0) -> bool:
     )
 
 
-def read_session() -> dict[str, Any] | None:
+def read_session(name: str | None = None) -> dict[str, Any] | None:
     try:
-        value = json.loads(session_path().read_text(encoding="utf-8"))
+        value = json.loads(session_path(name).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
     return value if isinstance(value, dict) else None
@@ -210,19 +222,32 @@ def save_session(info: dict[str, Any]) -> None:
         handle.flush()
         os.fsync(handle.fileno())
     temp.replace(path)
-    path.chmod(0o600)
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
 
 
-def clear_session(session_id: str) -> None:
-    current = read_session()
+def clear_session(session_id: str, name: str | None = None) -> None:
+    current = read_session(name)
     if current and current.get("session_id") == session_id:
-        session_path().unlink(missing_ok=True)
+        session_path(name).unlink(missing_ok=True)
+
+
+def session_names() -> list[str]:
+    root = get_platform().state_dir()
+    names = ["default"] if (root / "session.json").is_file() else []
+    sessions = root / "sessions"
+    if sessions.is_dir():
+        names.extend(
+            child.name
+            for child in sessions.iterdir()
+            if child.is_dir()
+            and _SESSION_NAME_PATTERN.fullmatch(child.name)
+            and (child / "session.json").is_file()
+        )
+    return sorted(names)
 
 
 def wait_process_exit(pid: int, timeout: float = 5.0) -> bool:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if not process_alive(pid):
-            return True
-        time.sleep(0.05)
-    return not process_alive(pid)
+    return get_platform().wait_process_exit(pid, timeout)

@@ -143,13 +143,16 @@ def test_connect_uses_swappable_openocd_configs_without_source_edits(
         capsys.readouterr()
 
 
-def test_skill_launcher_never_installs_without_authorization(monkeypatch, capsys) -> None:
+def test_skill_launcher_never_installs_without_authorization(monkeypatch, capsys, tmp_path) -> None:
     import importlib.metadata
     import runpy
     from pathlib import Path
 
     script = Path(__file__).parents[2] / "skills/embedded-debug/scripts/run_edbg.py"
     namespace = runpy.run_path(str(script))
+    # CI may have exercised the authorized bootstrap earlier in the same job.
+    # Keep this refusal test independent from any cached CLI installed there.
+    monkeypatch.setenv("EDBG_CACHE_HOME", str(tmp_path / "empty-cache"))
 
     def missing_package(_name: str) -> str:
         raise importlib.metadata.PackageNotFoundError

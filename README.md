@@ -9,7 +9,16 @@ npx skills add tangsangsimida/embedded-debug-skill --skill embedded-debug -a cod
 npx skills add tangsangsimida/embedded-debug-skill --skill embedded-debug -a claude-code -g -y
 ```
 
-Requirements: Python 3.11+ for the CLI. Hardware operations additionally require user-installed OpenOCD, a GDB matching the target architecture, and a working project debug setup. Skill installation does not install or modify system toolchains. The current development candidate is not a stable release. `edbg doctor` works even if the embedded toolchain is missing. Linux is the validated host; other operating systems are not yet verified.
+Requirements: Python 3.11+ for the CLI. Hardware operations additionally require user-installed OpenOCD, a GDB matching the target architecture, and a working project debug setup. Skill installation does not install or modify system toolchains. The current development candidate is not a stable release. `edbg doctor` works even if the embedded toolchain is missing. CI uses Python 3.11 as its compatibility baseline across multiple Linux, Windows, and macOS releases and x64/arm64 runners. This does not claim physical USB adapter or MCU validation on any platform.
+
+| Platform | Python 3.11 CLI + Mock CI runners | USB adapter / physical MCU |
+|---|---|---|
+| Linux x64 | Ubuntu 24.04, 26.04 | Not hardware validated |
+| Linux arm64 | Ubuntu 24.04 | Not hardware validated |
+| Windows x64 | Server 2022, Server 2025 | Not hardware validated |
+| Windows arm64 | Windows 11 arm64 | Not hardware validated |
+| macOS Intel | macOS 15 Intel | Not hardware validated |
+| macOS arm64 | macOS 15, 26 | Not hardware validated |
 
 Ask your agent: “Use EmbeddedDebug Skill to inspect my OpenOCD environment and connect using the current project's configuration. Read CPU registers and the current backtrace.” The agent should check first, use your OpenOCD files and matching GDB, then report exact errors or observed output. Flashing, reset, and writes require explicit authorization.
 
@@ -21,6 +30,7 @@ Ask your agent: “Use EmbeddedDebug Skill to inspect my OpenOCD environment and
 - Project discovery for existing VS Code launch/tasks, OpenOCD arguments, build commands, and ELF outputs. A standalone target file and `.edbg.toml` are not required if existing project settings define the path.
 - Persistent serialized GDB/MI2 transport with token matching, nested result parsing, async record routing, timeout handling, and disconnect errors.
 - Persistent cross-process GDB/MI session, so breakpoints and selected thread survive separate `edbg` commands. Existing local GDB Servers are reused automatically and checked through GDB.
+- Cross-platform state/cache directories, process identity and cleanup, interprocess locks, and authenticated loopback IPC; separate `--session <name>` contexts isolate multiple targets.
 - Generic GDB controller primitives for target selection, architecture/register discovery, expression reads, stack frames, breakpoints, thread selection, and run-state tracking.
 - Agent Skill metadata and resource validation. Skills CLI repository-install tests are an explicit release gate.
 
@@ -42,6 +52,8 @@ flowchart LR
   Adapter --> MCU[Target MCU]
   MI --> Caps[Response-driven capabilities]
   Caps --> Plugins[Optional architecture / RTOS / SVD extensions]
+  CLI --> Platform[Windows / Linux / macOS platform adapter]
+  Platform --> Runtime[State paths / locks / process lifecycle / local IPC]
 ```
 
 The support boundary is OpenOCD plus the configured GDB architecture and observed capabilities, not a chip-vendor list. No target configuration is bundled as a compatibility requirement. GDB backends and architecture diagnostics have extension boundaries; the first implementation defaults to ARM GNU GDB.
@@ -51,7 +63,7 @@ The support boundary is OpenOCD plus the configured GDB architecture and observe
 After user authorization, the Skill wrapper installs the CLI version pinned in the installed Skill. The current development candidate is not a stable Release:
 
 ```sh
-python3 <installed-skill-directory>/scripts/run_edbg.py --install-python-cli doctor --json
+python <installed-skill-directory>/scripts/run_edbg.py --install-python-cli doctor --json
 ```
 
 Or install it into your chosen Python environment from the immutable source commit pinned in the installed Skill launcher. Then run `edbg --help`, `edbg --version`, and `edbg doctor --json`. The Skills CLI installs Skill files; it does not install `edbg`, GDB, OpenOCD, or USB drivers. System tools remain user-managed.
@@ -63,7 +75,8 @@ Start in the existing project workspace:
 ```sh
 edbg discover --json
 edbg doctor --json
-edbg connect --elf build/firmware.elf
+edbg --session bench-a connect --elf build/firmware.elf
+edbg --session bench-a registers --json
 ```
 
 Discovery checks existing VS Code launch/tasks, OpenOCD command arguments, CMake/Make/PlatformIO files, ELF outputs, and common local GDB Server ports. An existing server is reused automatically and validated with GDB. If one project setting is genuinely unclear, pass only that setting explicitly. A standalone `.edbg.toml` or target.cfg is unnecessary when the existing project setup already provides the target path. A complete OpenOCD config or user-provided interface/target scripts remain supported:
@@ -86,7 +99,7 @@ A complete config can also contain adapter, target, board, flash driver, and ini
 
 ## Environment and configuration
 
-Use `edbg doctor --json` to inspect Python, ARM GCC, ARM GDB, OpenOCD, objcopy, size, and discovered project settings. GDB/OpenOCD are optional until a connected operation needs them. `--verbose` includes executable names. Explicit CLI paths override optional TOML, which overrides PATH discovery. Missing tools produce diagnostics; no downloads or environment modifications occur. For supported Linux shells, doctor prints a PATH suggestion only; Bash/Zsh use `export PATH="/your/toolchain/bin:$PATH"`, fish uses `fish_add_path /your/toolchain/bin`. The path is illustrative; do not copy it without replacing it.
+Use `edbg doctor --json` to inspect Python, ARM GCC, ARM GDB, OpenOCD, objcopy, size, and discovered project settings. GDB/OpenOCD are optional until a connected operation needs them. `--verbose` includes executable names. Explicit CLI paths override optional TOML, which overrides PATH discovery. Missing tools produce diagnostics; no downloads or environment modifications occur. Doctor prints only a PATH suggestion: Bash/Zsh use `export PATH="/your/toolchain/bin:$PATH"`, fish uses `fish_add_path /your/toolchain/bin`, PowerShell uses `$env:Path = "C:\\toolchain\\bin;$env:Path"`, and CMD uses `set "PATH=C:\\toolchain\\bin;%PATH%"`. Replace the illustrative directory with the actual toolchain location.
 
 TOML configuration is optional and strict. Unknown fields, invalid ports, and non-loopback OpenOCD hosts are rejected. Build commands are argv arrays, not shell strings. Examples in `configs/` are demonstrations only. In particular, `gd32e5-template.toml` makes no claim that a GD32E5 target is supported or that STM32 OpenOCD scripts are interchangeable.
 
@@ -143,7 +156,7 @@ Read-only inspection is the default. Explicit user authorization is required bef
 
 ## Validation status and roadmap
 
-The repository includes unit/Mock tests and CI for package build, lint, types, tests, Skill validation, and isolated Skills CLI installs for Codex and Claude Code. Stable Release is blocked by `release-readiness.toml` until all required gates pass. Hardware tests require explicit opt-in and user-supplied config and are skipped by default; no physical probe test is claimed.
+The repository includes unit/Mock tests and Windows, Linux, and macOS CI for package build, lint, types, tests, Skill validation, and isolated Skills CLI installs for Codex and Claude Code. The release workflow also installs the exact release wheel on every platform/agent matrix before applying the stable-release gate. Stable Release is blocked by `release-readiness.toml` until all required gates pass. Hardware tests require explicit opt-in and user-supplied config and are skipped by default; no physical probe test is claimed.
 
 Next: complete end-to-end Skill installation with the exact release artifact, implement architecture plugin APIs and evidence-based HardFault decoding, safe SVD reads, ThreadX/OpenOCD compatibility testing, and serial telemetry.
 
