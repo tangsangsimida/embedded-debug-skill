@@ -4,7 +4,7 @@ description: Debug embedded firmware through user-configured OpenOCD and GDB. Us
 license: MIT
 compatibility: Requires an agent that can run terminal commands; Python 3.11+ for the CLI and user-installed GDB/OpenOCD for hardware access.
 metadata:
-  version: "0.1.0"
+  version: "0.1.1"
 ---
 
 # Embedded debugging workflow
