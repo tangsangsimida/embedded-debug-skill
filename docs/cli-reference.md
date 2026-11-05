@@ -14,8 +14,11 @@ diagnosis needs them.
 
 `edbg fault-analyze --snapshot <file>` performs offline Cortex-M fault-frame
 analysis from a saved snapshot envelope. It does not connect to hardware; an
-unsupported architecture or incomplete frame is returned as `unknown` with
-limitations.
+unsupported architecture or incomplete frame is returned with a non-valid
+`snapshot_validity` and limitations. A valid snapshot reports a
+`fault_classification`, but `root_cause` remains unknown until additional
+source-level or reproduction evidence is supplied; snapshot decoding alone is
+not a root-cause proof.
 
 `edbg environment inspect --json` independently discovers the Python runtime, ARM GCC/GDB, OpenOCD, objcopy, and size utilities. CLI overrides, project tool paths, then PATH take precedence. `edbg environment plan --json` returns advisory install and PATH guidance only. `edbg environment path-add --directory <existing-bin-dir> --shell <bash|zsh|fish> --authorize` adds an idempotent marked PATH block to the selected current-user shell file; `environment path-remove --shell <bash|zsh|fish> --authorize` removes only that block. Both reject missing authorization and audit actual changes. `edbg environment install-cli --source <pip-source> --authorize` installs the explicitly selected Python CLI into a versioned user cache and verifies its version and source digest against the running Skill; it never installs embedded system tools. A failed install removes only its incomplete versioned environment; previous CLI versions remain available for rollback.
 
