@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.2 - 2026-11-05
+
+Release follow-up:
+
+- record current STM32H743 HIL provenance and safe snapshot-analysis evidence;
+- keep the release artifact and gated validation record aligned with the tagged commit.
+
 ## 0.1.1 - 2026-11-05
 
 Reliability and release follow-up for the embedded debugging Skill:
