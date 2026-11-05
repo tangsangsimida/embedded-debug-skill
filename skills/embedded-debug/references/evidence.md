@@ -13,12 +13,15 @@ Each operation record should contain:
 {
   "step": "read-variable",
   "operation": "edbg variable read edbg_sample_ticks",
+  "task_id": "diagnostic-task-123",
+  "session": "bench-a",
   "source": "cli-json|gdb-mi|openocd|source|build|test|user",
   "observed_at": "RFC-3339 timestamp",
   "success": true,
   "target_state_before": "halted|running|unknown|disconnected",
   "target_state_after": "halted|running|unknown|disconnected",
   "authorization": "none|run|breakpoint|expression|write|flash|reset",
+  "authorization_source": "user-confirmed|cli-flag|policy|unknown",
   "observations": [],
   "diagnostics": [],
   "raw_artifact": "relative path or null"
@@ -27,6 +30,11 @@ Each operation record should contain:
 
 `observations` are facts, not conclusions. A failed operation is still useful
 evidence and must retain its stable error code, message, and diagnostics.
+`task_id` and `step_id` can be supplied through `EDBG_TASK_ID` and
+`EDBG_STEP_ID`; otherwise the CLI command is used as the step. The CLI records
+the current session name and leaves `authorization_source` as `unknown` unless
+the caller explicitly supplies a provenance value. These fields add context;
+they do not turn a CLI flag into proof of user approval.
 
 ## Confidence and claim levels
 

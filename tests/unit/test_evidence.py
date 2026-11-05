@@ -9,6 +9,9 @@ from embedded_debug.models import Envelope
 def test_evidence_writer_is_opt_in_and_uses_contract_fields(monkeypatch, tmp_path) -> None:
     path = tmp_path / "nested" / "trace.jsonl"
     monkeypatch.setenv("EDBG_EVIDENCE_FILE", str(path))
+    monkeypatch.setenv("EDBG_TASK_ID", "task-1")
+    monkeypatch.setenv("EDBG_STEP_ID", "step-2")
+    monkeypatch.setenv("EDBG_AUTHORIZATION_SOURCE", "user-confirmed")
 
     append_evidence(
         Envelope(
@@ -22,7 +25,10 @@ def test_evidence_writer_is_opt_in_and_uses_contract_fields(monkeypatch, tmp_pat
     )
 
     record = json.loads(path.read_text(encoding="utf-8"))
-    assert record["step"] == "continue"
+    assert record["step"] == "step-2"
+    assert record["task_id"] == "task-1"
+    assert record["authorization_source"] == "user-confirmed"
+    assert "session" in record
     assert record["source"] == "cli-json"
     assert record["authorization"] == "run"
     assert record["target_state_before"] == "halted"
