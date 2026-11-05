@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any, cast
 
 from tests.agent_eval.evaluator import evaluate_suite, evaluate_trace
 
@@ -56,3 +57,44 @@ def test_evaluator_does_not_accept_static_suspicion_as_confirmed_root_cause() ->
 
     assert result.diagnosis_correct is False
     assert result.complete is False
+
+
+def test_evaluator_requires_all_case_operations_in_order() -> None:
+    cases, traces = _fixtures()
+    trace = dict(traces["hardfault-invalid-stack"])
+    operations = cast(list[dict[str, Any]], trace["operations"])
+    trace["operations"] = operations[2:]
+
+    result = evaluate_trace(cases[0], trace)
+
+    assert result.complete is False
+    assert any("required operation" in error for error in result.evidence_errors)
+
+
+def test_evaluator_rejects_out_of_order_operations() -> None:
+    cases, traces = _fixtures()
+    trace = dict(traces["variable-unit-conversion"])
+    operations = cast(list[dict[str, Any]], trace["operations"])
+    trace["operations"] = [operations[1], operations[0], *operations[2:]]
+
+    result = evaluate_trace(cases[2], trace)
+
+    assert result.complete is False
+    assert any("out-of-order required operation" in error for error in result.evidence_errors)
+
+
+def test_evaluator_requires_captured_evidence_supporting_root_cause() -> None:
+    cases, traces = _fixtures()
+    trace = dict(traces["hardfault-invalid-stack"])
+    trace["evidence"] = [
+        {"id": "hf-discover", "operation": "discover", "content": {"project": "fixture"}},
+        {"id": "hf-status", "operation": "status", "content": {"target_state": "halted"}},
+        {"id": "hf-regs", "operation": "registers", "content": {"cfsr": "0x00008200"}},
+        {"id": "hf-stack", "operation": "backtrace", "content": {"pc": "0x08000100"}},
+    ]
+
+    result = evaluate_trace(cases[0], trace)
+
+    assert result.complete is False
+    assert result.diagnosis_correct is False
+    assert any("not supported by captured evidence" in error for error in result.evidence_errors)
