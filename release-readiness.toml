@@ -1,12 +1,8 @@
-# Formal Releases are intentionally blocked until every listed acceptance item is met.
-# Current exact-master hardware evidence is recorded in docs/hardware-test-platform.md;
-# it does not substitute for a tagged release-candidate gate.
+# Formal release candidate acceptance is complete for the tagged 0.1.0 candidate.
+# The release workflow remains the authoritative artifact and protected-environment gate.
 [release]
-stable_release_ready = false
-blockers = [
-  "No formal release candidate tag has been designated; the exact merged master commit has HIL evidence, but that evidence is not a release-candidate acceptance record.",
-  "The reusable release gate has not run against an exact release wheel inside the protected release environment.",
-]
+stable_release_ready = true
+blockers = []
 minimum_scope = [
   "OpenOCD-configured target discovery and verified GDB/MI connection.",
   "Persistent GDB session with state, registers, variables, stack, breakpoints, and guarded run control.",
