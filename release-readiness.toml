@@ -1,4 +1,6 @@
 # Formal Releases are intentionally blocked until every listed acceptance item is met.
+# Current exact-master hardware evidence is recorded in docs/hardware-test-platform.md;
+# it does not substitute for a tagged release-candidate gate.
 [release]
 stable_release_ready = false
 blockers = [
