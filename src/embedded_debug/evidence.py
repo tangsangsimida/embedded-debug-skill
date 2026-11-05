@@ -7,6 +7,7 @@ import os
 import sys
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import portalocker
 
@@ -70,8 +71,20 @@ def append_evidence(envelope: Envelope) -> None:
     path = Path(configured).expanduser()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        line = json.dumps(evidence_record(envelope), ensure_ascii=False, default=str) + "\n"
+        record = evidence_record(envelope)
+        artifact_dir = os.environ.get("EDBG_EVIDENCE_ARTIFACT_DIR")
+        if artifact_dir:
+            artifact_root = Path(artifact_dir).expanduser()
+            artifact_root.mkdir(parents=True, exist_ok=True)
+            artifact_name = f"{envelope.command}-{uuid4().hex}.json"
+            artifact_path = artifact_root / artifact_name
+            artifact_path.write_text(
+                json.dumps(envelope.as_dict(), ensure_ascii=False, default=str) + "\n",
+                encoding="utf-8",
+            )
+            record["raw_artifact"] = artifact_name
+        line = json.dumps(record, ensure_ascii=False, default=str) + "\n"
         with portalocker.Lock(str(path), mode="a", timeout=5, encoding="utf-8") as stream:
             stream.write(line)
-    except (OSError, portalocker.exceptions.LockException) as exc:
+    except (OSError, portalocker.exceptions.LockException, ValueError) as exc:
         print(f"Evidence recording failed for {path}: {exc}", file=sys.stderr)

@@ -14,8 +14,8 @@ from collections.abc import Sequence
 from pathlib import Path
 
 PINNED_VERSION = "0.1.0"
-SOURCE = "git+https://github.com/tangsangsimida/embedded-debug-skill.git@ea9c08ad0bae2d9f328f5e378840949122535466"
-PINNED_SOURCE_DIGEST = "6039459aadc7c98b6dda25d95818b196f9b4d689541cebd25429fb27a176a8eb"
+SOURCE = "git+https://github.com/tangsangsimida/embedded-debug-skill.git@374ad695a64f853cac4ab3d26e5f0df3e804c7a6"
+PINNED_SOURCE_DIGEST = "f2cb323a931c5044992a22725614d5c70513d1b2c96e0a8e9506edc8e8f6bd04"
 
 
 def _matches_build_info(command: Sequence[str]) -> bool:

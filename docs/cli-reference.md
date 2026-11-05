@@ -10,7 +10,10 @@ Skill evidence fields and preserve unknown authorization/state instead of
 guessing. The file is protected by an interprocess lock; a recording failure is
 reported on stderr but does not change the debug operation result. This captures
 CLI evidence, not raw GDB/OpenOCD logs; retain those artifacts separately when a
-diagnosis needs them.
+diagnosis needs them. Set `EDBG_EVIDENCE_ARTIFACT_DIR` as well to persist each
+raw CLI envelope as an individual JSON artifact; `raw_artifact` then contains
+the artifact filename relative to that directory. Artifact-writing failures are
+reported without changing the debug operation result.
 
 `edbg fault-analyze --snapshot <file>` performs offline Cortex-M fault-frame
 analysis from a saved snapshot envelope. It does not connect to hardware; an

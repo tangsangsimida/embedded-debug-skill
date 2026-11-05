@@ -46,6 +46,21 @@ def test_evidence_writer_does_not_infer_expression_authorization(monkeypatch, tm
     assert record["authorization"] == "unknown"
 
 
+def test_evidence_writer_persists_raw_cli_artifact_when_requested(monkeypatch, tmp_path) -> None:
+    path = tmp_path / "trace.jsonl"
+    artifact_dir = tmp_path / "artifacts"
+    monkeypatch.setenv("EDBG_EVIDENCE_FILE", str(path))
+    monkeypatch.setenv("EDBG_EVIDENCE_ARTIFACT_DIR", str(artifact_dir))
+
+    envelope = Envelope("status", True, target_state="halted", data={"state": "halted"})
+    append_evidence(envelope)
+
+    record = json.loads(path.read_text(encoding="utf-8"))
+    artifact = artifact_dir / record["raw_artifact"]
+    assert record["raw_artifact"]
+    assert json.loads(artifact.read_text(encoding="utf-8"))["command"] == "status"
+
+
 def test_evidence_write_failure_does_not_change_operation(monkeypatch, capsys, tmp_path) -> None:
     parent_file = tmp_path / "not-a-directory"
     parent_file.write_text("occupied", encoding="utf-8")
