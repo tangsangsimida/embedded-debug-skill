@@ -3,8 +3,15 @@
   "traces": {
     "hardfault-invalid-stack": {
       "phases": ["understand", "discover", "plan", "execute", "verify", "report"],
-      "evidence": [{"id": "hf-regs"}, {"id": "hf-stack"}],
+      "evidence": [
+        {"id": "hf-discover", "operation": "discover", "content": {"project": "fixture", "elf": "sample.elf"}},
+        {"id": "hf-status", "operation": "status", "content": {"target_state": "halted"}},
+        {"id": "hf-regs", "operation": "registers", "content": {"cfsr": "0x00008200", "hfsr": "0x40000000"}, "supports": ["invalid-stack-pointer"]},
+        {"id": "hf-stack", "operation": "backtrace", "content": {"pc": "0x08000100", "arch": "armv7e-m"}, "supports": ["invalid-stack-pointer"]}
+      ],
       "operations": [
+        {"name": "discover", "side_effect": "none", "authorization": "none", "evidence_ids": ["hf-discover"]},
+        {"name": "status", "side_effect": "none", "authorization": "none", "evidence_ids": ["hf-status"]},
         {"name": "registers", "side_effect": "none", "authorization": "none", "evidence_ids": ["hf-regs"]},
         {"name": "backtrace", "side_effect": "none", "authorization": "none", "evidence_ids": ["hf-stack"]}
       ],
@@ -18,10 +25,15 @@
     },
     "hang-lock-wait": {
       "phases": ["understand", "discover", "plan", "execute", "verify", "report"],
-      "evidence": [{"id": "hang-a"}, {"id": "hang-b"}],
+      "evidence": [
+        {"id": "hang-a", "operation": "status", "content": {"target_state": "halted", "pc": "0x08001000"}, "supports": ["lock-wait"]},
+        {"id": "hang-b", "operation": "backtrace", "content": {"frames": ["mutex_lock", "worker"]}, "supports": ["lock-wait"]},
+        {"id": "hang-c", "operation": "sample-again", "content": {"target_state": "halted", "same_pc": true}, "supports": ["lock-wait"]}
+      ],
       "operations": [
         {"name": "status", "side_effect": "none", "authorization": "none", "evidence_ids": ["hang-a"]},
-        {"name": "sample-again", "side_effect": "run", "authorization": "run", "evidence_ids": ["hang-b"]}
+        {"name": "backtrace", "side_effect": "none", "authorization": "none", "evidence_ids": ["hang-b"]},
+        {"name": "sample-again", "side_effect": "run", "authorization": "run", "evidence_ids": ["hang-c"]}
       ],
       "root_cause": {"label": "lock-wait", "confidence": "confirmed", "evidence_ids": ["hang-a", "hang-b"]},
       "report": {"problem": "hang", "root_cause": "lock wait", "validation": "two samples match", "final_target_state": "halted"},
@@ -33,8 +45,14 @@
     },
     "variable-unit-conversion": {
       "phases": ["understand", "discover", "plan", "execute", "verify", "fix", "report"],
-      "evidence": [{"id": "var-value"}, {"id": "source-diff"}, {"id": "test"}],
+      "evidence": [
+        {"id": "var-discover", "operation": "discover", "content": {"project": "fixture"}},
+        {"id": "var-value", "operation": "variable-read", "content": {"name": "adc_mv", "value": "3300"}, "supports": ["unit-conversion-error"]},
+        {"id": "source-diff", "operation": "source-analysis", "content": {"conversion": "raw / 4095 * 3.3"}, "supports": ["unit-conversion-error"]},
+        {"id": "test", "operation": "regression-test", "content": {"passed": true}, "supports": ["unit-conversion-error"]}
+      ],
       "operations": [
+        {"name": "discover", "side_effect": "none", "authorization": "none", "evidence_ids": ["var-discover"]},
         {"name": "variable-read", "side_effect": "none", "authorization": "none", "evidence_ids": ["var-value"]},
         {"name": "source-analysis", "side_effect": "none", "authorization": "none", "evidence_ids": ["source-diff"]},
         {"name": "regression-test", "side_effect": "none", "authorization": "none", "evidence_ids": ["test"]}
@@ -49,9 +67,15 @@
     },
     "missing-gdb-recovery": {
       "phases": ["understand", "discover", "plan", "execute", "verify", "report"],
-      "evidence": [{"id": "doctor"}, {"id": "plan"}, {"id": "recheck"}],
+      "evidence": [
+        {"id": "doctor", "operation": "doctor", "content": {"gdb": "missing"}, "supports": ["missing-gdb"]},
+        {"id": "inspect", "operation": "environment-inspect", "content": {"gdb": "not-found"}, "supports": ["missing-gdb"]},
+        {"id": "plan", "operation": "environment-plan", "content": {"action": "install-or-configure-gdb"}, "supports": ["missing-gdb"]},
+        {"id": "recheck", "operation": "recheck", "content": {"gdb": "available"}, "supports": ["missing-gdb"]}
+      ],
       "operations": [
         {"name": "doctor", "side_effect": "none", "authorization": "none", "evidence_ids": ["doctor"]},
+        {"name": "environment-inspect", "side_effect": "none", "authorization": "none", "evidence_ids": ["inspect"]},
         {"name": "environment-plan", "side_effect": "none", "authorization": "none", "evidence_ids": ["plan"]},
         {"name": "recheck", "side_effect": "none", "authorization": "none", "evidence_ids": ["recheck"]}
       ],
