@@ -22,7 +22,7 @@ CLI 需要 Python 3.11+。硬件调试还需要用户自行安装的 OpenOCD、�
 
 项目按 OpenOCD、GDB 架构和实际探测响应确定可用能力，不维护芯片厂商白名单。用户直接提供 interface/target/board 配置、完整 OpenOCD 配置或自定义初始化命令；切换目标或调试器不要求修改 Python 源码。未知能力保持 `unknown`。
 
-v0.1.0 最小范围为工程/工具发现、经 GDB 验证的 OpenOCD 连接、持久化 GDB/MI 检查与受保护的运行控制、System Toolchain First 环境诊断，以及已验证的 Codex/Claude Skills 安装。HardFault、RTOS/ThreadX、SVD 和遥测列入路线图，不作为当前能力声明。记录中的 STM32H743 候选提交已通过 opt-in HIL runner 和源码级 GDB/MI 实机检查，详见[测试平台记录](docs/hardware-test-platform.md)。
+v0.1.0 最小范围为工程/工具发现、经 GDB 验证的 OpenOCD 连接、持久化 GDB/MI 检查与受保护的运行控制、System Toolchain First 环境诊断，以及已验证的 Codex/Claude Skills 安装。HardFault、RTOS/ThreadX、SVD 和遥测列入路线图，不作为当前能力声明。精确合并 master 候选已通过 opt-in HIL runner 和源码级 GDB/MI 实机检查，详见[测试平台记录](docs/hardware-test-platform.md)。正式发布仍需指定 RC/tag 并通过受保护的 exact wheel release gate。
 
 候选代码已实现工具链 PATH 诊断、现有项目配置发现、OpenOCD 服务复用与子进程管理、跨 CLI 持久化且串行化的 GDB/MI2 会话、基本 GDB 操作、Codex/Claude Skills CLI 安装验证和 Mock 测试。平台目录、进程身份/回收、锁和认证 IPC 由平台适配层封装。使用 `--session <name>` 可隔离多个目标会话；相同回环 GDB 端口不能被多个会话同时认领。尚无稳定 Release；`release-readiness.toml` 会在缺少验收项时阻止发布。HardFault/ThreadX/SVD/遥测尚未验证；实体硬件证据仅适用于记录中的开发板、工具和候选提交。
 
