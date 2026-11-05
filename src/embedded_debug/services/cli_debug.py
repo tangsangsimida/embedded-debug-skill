@@ -164,6 +164,7 @@ def handle_debug_command(name: str, args: argparse.Namespace, cfg: ProjectConfig
                         succeeded,
                         target=(reconnect or {}).get("target", {}),
                         target_state=(reconnect or {}).get("target_state", "unknown"),
+                        provenance=(reconnect or {}).get("provenance", {}),
                         data={
                             "source": flash_task["source"],
                             "exit_code": flash_result.returncode,
@@ -254,6 +255,7 @@ def handle_debug_command(name: str, args: argparse.Namespace, cfg: ProjectConfig
                 target=target_info,
                 target_state=target_state,
                 target_state_before=response.get("target_state_before", "unknown"),
+                provenance=response.get("provenance", {}),
                 data=response_data,
                 diagnostics=(
                     [f"Capabilities: {response_data['capabilities']}"]
