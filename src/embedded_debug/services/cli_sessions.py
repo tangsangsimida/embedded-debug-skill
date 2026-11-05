@@ -36,6 +36,7 @@ def handle_session_command(
                 "error" not in data,
                 target=data.get("target", {}),
                 target_state=data.get("target_state", "unknown"),
+                provenance=data.get("provenance", {}),
                 data=data,
                 error=(
                     {"code": "SESSION_UNAVAILABLE", "message": data["error"]}
@@ -66,6 +67,7 @@ def handle_session_command(
                 True,
                 target=response.get("target", {}),
                 target_state=response.get("target_state", "unknown"),
+                provenance=response.get("provenance", {}),
                 data=response.get("data"),
             ),
             args.json,
@@ -83,6 +85,7 @@ def handle_session_command(
                 True,
                 target=response.get("target", {}),
                 target_state=response.get("target_state", "unknown"),
+                provenance=response.get("provenance", {}),
                 data=response.get("data"),
             ),
             args.json,
@@ -126,6 +129,7 @@ def handle_session_command(
                 True,
                 target=data.get("target", {}),
                 target_state=data.get("target_state", "unknown"),
+                provenance=data.get("provenance", {}),
                 data={
                     **data,
                     "session": "started" if name == "session-start" else "connected",

@@ -53,6 +53,7 @@ def evidence_record(envelope: Envelope) -> dict[str, Any]:
         "observations": envelope.data if envelope.success else [],
         "diagnostics": envelope.diagnostics
         + ([envelope.error] if envelope.error is not None else []),
+        "provenance": envelope.provenance,
         "raw_artifact": None,
     }
 

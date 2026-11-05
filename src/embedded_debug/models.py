@@ -33,6 +33,7 @@ class Envelope:
     data: Any = None
     error: dict[str, str] | None = None
     diagnostics: list[str] = field(default_factory=list)
+    provenance: dict[str, Any] = field(default_factory=dict)
     timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
     def as_dict(self) -> dict[str, Any]:

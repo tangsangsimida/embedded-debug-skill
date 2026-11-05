@@ -34,6 +34,7 @@ def test_evidence_writer_is_opt_in_and_uses_contract_fields(monkeypatch, tmp_pat
     assert record["target_state_before"] == "halted"
     assert record["target_state_after"] == "running"
     assert record["observations"] == {"state": "running"}
+    assert record["provenance"] == {}
 
 
 def test_evidence_writer_does_not_infer_expression_authorization(monkeypatch, tmp_path) -> None:
@@ -59,6 +60,21 @@ def test_evidence_writer_persists_raw_cli_artifact_when_requested(monkeypatch, t
     artifact = artifact_dir / record["raw_artifact"]
     assert record["raw_artifact"]
     assert json.loads(artifact.read_text(encoding="utf-8"))["command"] == "status"
+
+
+def test_evidence_writer_preserves_provenance(monkeypatch, tmp_path) -> None:
+    path = tmp_path / "trace.jsonl"
+    monkeypatch.setenv("EDBG_EVIDENCE_FILE", str(path))
+    provenance = {
+        "session_id": "session-1",
+        "elf_sha256": "a" * 64,
+        "gdb_version": None,
+    }
+
+    append_evidence(Envelope("status", True, provenance=provenance))
+
+    record = json.loads(path.read_text(encoding="utf-8"))
+    assert record["provenance"] == provenance
 
 
 def test_evidence_write_failure_does_not_change_operation(monkeypatch, capsys, tmp_path) -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import signal
@@ -258,6 +259,11 @@ class DebugSessionDaemon:
             }
         except Exception as exc:  # Keep one malformed operation from killing the owner process.
             response = {"success": False, "error": f"Internal session error: {exc}"}
+        if isinstance(response, dict):
+            provenance = self._provenance()
+            response.setdefault("provenance", provenance)
+            if isinstance(response.get("data"), dict):
+                response["data"].setdefault("provenance", provenance)
         self._reply(connection, response)
 
     @staticmethod
@@ -266,6 +272,34 @@ class DebugSessionDaemon:
             connection.sendall(json.dumps(response, default=str).encode() + b"\n")
         except OSError:
             pass
+
+    def _provenance(self) -> dict[str, Any]:
+        """Return reproducibility metadata without claiming unknown tool versions."""
+
+        elf = self.settings.get("elf")
+        elf_path = str(elf) if elf else None
+        elf_sha256: str | None = None
+        if elf_path:
+            try:
+                digest = hashlib.sha256()
+                with open(elf_path, "rb") as stream:
+                    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                        digest.update(chunk)
+                elf_sha256 = digest.hexdigest()
+            except OSError:
+                pass
+        return {
+            "session_id": self.session_id,
+            "session_name": self.session_name,
+            "gdb_executable": self.settings.get("gdb_executable"),
+            "gdb_process_executable": self.transport.process_executable,
+            "openocd_executable": self.settings.get("openocd_executable"),
+            "openocd_process_executable": self.manager.process_executable,
+            "elf": elf_path,
+            "elf_sha256": elf_sha256,
+            "gdb_version": None,
+            "openocd_version": None,
+        }
 
     def _require_halted(self) -> None:
         if self.transport.state != "halted":
