@@ -11,6 +11,7 @@ from typing import Any
 import portalocker
 
 from .models import Envelope
+from .session_store import current_session_name
 
 
 def _authorization(command: str) -> str:
@@ -34,15 +35,20 @@ def _authorization(command: str) -> str:
 def evidence_record(envelope: Envelope) -> dict[str, Any]:
     """Normalize one CLI envelope without upgrading unknown facts."""
 
+    task_id = os.environ.get("EDBG_TASK_ID")
+    step_id = os.environ.get("EDBG_STEP_ID")
     return {
-        "step": envelope.command,
+        "step": step_id or envelope.command,
         "operation": envelope.command,
+        "task_id": task_id,
+        "session": current_session_name(),
         "source": "cli-json",
         "observed_at": envelope.timestamp,
         "success": envelope.success,
         "target_state_before": envelope.target_state_before,
         "target_state_after": envelope.target_state,
         "authorization": _authorization(envelope.command),
+        "authorization_source": os.environ.get("EDBG_AUTHORIZATION_SOURCE", "unknown"),
         "observations": envelope.data if envelope.success else [],
         "diagnostics": envelope.diagnostics
         + ([envelope.error] if envelope.error is not None else []),
