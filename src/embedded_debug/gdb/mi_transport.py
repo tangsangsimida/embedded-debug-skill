@@ -252,7 +252,7 @@ class MITransport:
         # consuming them. The reader threads below retain their own generations.
         with self._lock:
             self.close()
-            self._records = queue.Queue()
+            self._records = queue.Queue(maxsize=2)
             self.async_records.clear()
             self.async_records_dropped = 0
             self.unmatched_results_dropped = 0

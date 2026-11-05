@@ -125,6 +125,16 @@ def test_reconnect_restarts_debugger_process() -> None:
     transport.close()
 
 
+def test_reconnect_preserves_bounded_response_queue() -> None:
+    transport = MITransport(str(MOCK_GDB), timeout=1)
+    try:
+        transport.start()
+        transport.reconnect()
+        assert transport._records.maxsize == 2
+    finally:
+        transport.close()
+
+
 def test_delayed_old_reader_stays_bound_to_its_process(monkeypatch) -> None:
     transport = MITransport(str(MOCK_GDB), timeout=2)
     original_start = threading.Thread.start
