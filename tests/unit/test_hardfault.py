@@ -25,7 +25,11 @@ def test_hardfault_decoder_uses_stacked_pc_and_decodes_cortex_m_flags() -> None:
     result = analyze_snapshot(_snapshot())
 
     assert result["status"] == "analyzed"
-    assert result["confidence"] == "confirmed"
+    assert result["snapshot_validity"] == "valid"
+    assert result["confidence"] == "observed"
+    assert result["fault_classification"] == "forced-hardfault"
+    assert result["root_cause"] is None
+    assert result["root_cause_confidence"] == "unknown"
     assert result["fault_pc"] == "0x8001234"
     assert result["live_pc"] == "0x8000100"
     assert result["stack_source"] == "msp"
@@ -40,6 +44,22 @@ def test_hardfault_decoder_preserves_unknown_architecture_and_missing_frame() ->
     assert result["confidence"] == "unknown"
     assert result["fault_pc"] is None
     assert result["limitations"]
+
+
+def test_hardfault_decoder_rejects_invalid_exc_return_without_confirming_snapshot() -> None:
+    snapshot = _snapshot()
+    snapshot["registers"] = [
+        {"name": "lr", "value": "0xffffff00"},
+        {"name": "pc", "value": "0x08000100"},
+        {"name": "cfsr", "value": "0x00008200"},
+        {"name": "hfsr", "value": "0x40000000"},
+    ]
+
+    result = analyze_snapshot(snapshot)
+
+    assert result["snapshot_validity"] == "incomplete"
+    assert result["root_cause_confidence"] == "unknown"
+    assert "valid EXC_RETURN" in " ".join(result["limitations"])
 
 
 def test_hardfault_decoder_uses_gdb_frame_architecture_when_top_level_is_auto() -> None:

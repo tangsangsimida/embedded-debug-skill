@@ -19,6 +19,7 @@ _UFSR = {
 }
 _HFSR = {1: "VECTTBL", 30: "FORCED", 31: "DEBUGEVT"}
 _FRAME_FIELDS = ("r0", "r1", "r2", "r3", "r12", "lr", "pc", "xpsr")
+_EXC_RETURN_VALUES = {0xE1, 0xE9, 0xED, 0xF1, 0xF9, 0xFD}
 
 
 def _integer(value: object) -> int | None:
@@ -77,6 +78,26 @@ def _stacked_frame(snapshot: dict[str, Any]) -> dict[str, str] | None:
     return {field: _hex(value) or "0x0" for field, value in values.items()}
 
 
+def _valid_exc_return(value: int | None) -> bool:
+    return (
+        value is not None
+        and (value & 0xFFFFFF00) == 0xFFFFFF00
+        and (value & 0xFF) in _EXC_RETURN_VALUES
+    )
+
+
+def _fault_classification(flags: dict[str, list[str]]) -> str | None:
+    if "FORCED" in flags["hfsr"]:
+        return "forced-hardfault"
+    if flags["mmfsr"]:
+        return "memmanage-fault"
+    if flags["bfsr"]:
+        return "bus-fault"
+    if flags["ufsr"]:
+        return "usage-fault"
+    return None
+
+
 def _architecture(snapshot: dict[str, Any]) -> tuple[str, str]:
     direct = str(snapshot.get("architecture", "unknown")).strip().lower()
     if direct in SUPPORTED_CORTEX_M:
@@ -105,10 +126,11 @@ def analyze_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
     frame = _stacked_frame(snapshot)
     exc_return = registers.get("lr")
     stack_source = None
-    if exc_return is not None and (exc_return & 0xFFFFFF00) == 0xFFFFFF00:
+    if _valid_exc_return(exc_return):
+        assert exc_return is not None
         stack_source = "psp" if exc_return & 0x4 else "msp"
     elif exc_return is not None:
-        limitations.append("LR is not a recognized EXC_RETURN value")
+        limitations.append("LR is not a valid EXC_RETURN value")
     else:
         limitations.append("EXC_RETURN/LR is missing")
     if frame is None:
@@ -121,11 +143,17 @@ def analyze_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
     }
     any_fault_flag = any(flags.values())
     fault_pc = _integer(frame.get("pc")) if frame else None
-    if supported and frame and any_fault_flag:
-        confidence = "confirmed"
+    complete_snapshot = (
+        supported and frame is not None and _valid_exc_return(exc_return) and any_fault_flag
+    )
+    if complete_snapshot:
+        snapshot_validity = "valid"
+        confidence = "observed"
     elif supported and (frame or any_fault_flag):
+        snapshot_validity = "incomplete"
         confidence = "inferred"
     else:
+        snapshot_validity = "unsupported" if not supported else "incomplete"
         confidence = "unknown"
     if not any_fault_flag:
         limitations.append("CFSR/HFSR has no decoded fault flag")
@@ -134,7 +162,11 @@ def analyze_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
         "architecture": architecture,
         "architecture_source": architecture_source,
         "architecture_supported": supported,
+        "snapshot_validity": snapshot_validity,
         "confidence": confidence,
+        "fault_classification": _fault_classification(flags),
+        "root_cause": None,
+        "root_cause_confidence": "unknown",
         "fault_pc": _hex(fault_pc),
         "live_pc": _hex(registers.get("pc")),
         "stack_source": stack_source,
